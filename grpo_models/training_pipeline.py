@@ -44,10 +44,10 @@ from .betting_integration import (
 @dataclass
 class TrainingConfig:
     """Configuration for training pipeline"""
-    # Data split
-    train_years: List[int] = field(default_factory=lambda: list(range(2010, 2017)))
-    val_years: List[int] = field(default_factory=lambda: [2017])
-    test_years: List[int] = field(default_factory=lambda: [2018, 2019])
+    # Data split (updated for 2010-2025 data)
+    train_years: List[int] = field(default_factory=lambda: list(range(2010, 2022)))
+    val_years: List[int] = field(default_factory=lambda: [2022])
+    test_years: List[int] = field(default_factory=lambda: [2023, 2024, 2025])
 
     # Training parameters
     n_cv_folds: int = 5
