@@ -22,6 +22,15 @@ Two safeguards from the method keep learning steady:
   set ratio, so a lucky streak cannot swing the policy
 * a KL penalty: the new policy is kept close to the reference (previous) one
 
+Passing is the default
+----------------------
+Results of single games are mostly luck, so a policy can look good on past
+games by chance. After every learning round the policy is scored on games it
+did not train on. It is kept only if it beats "never bet" there by a clear
+margin. If no round manages that, the agent keeps the never-bet policy. An
+agent that passes on everything is therefore a real result. It means the
+evidence did not support betting.
+
 One deliberate difference from the original recipe
 ---------------------------------------------------
 The original GRPO divides each group's rewards by that group's own spread.
@@ -97,6 +106,10 @@ class GRPOConfig:
     batch_size: int = 4096
     weight_decay: float = 1e-4
     patience: int = 15  # stop after this many rounds without a better validation result
+    # How much better than "never bet" a policy must look on held-back games
+    # before it is trusted, in standard errors. Game results are very noisy,
+    # so without this bar a policy that got lucky would be kept.
+    evidence: float = 1.0
     seed: int = 3
 
 
@@ -216,9 +229,16 @@ class GRPOAgent:
         got = rewards[np.arange(len(chosen)), chosen]
         return {
             "mean_reward": float(got.mean()),
+            "standard_error": float(got.std() / np.sqrt(len(got))),
             "bet_rate": float((chosen != 0).mean()),
             "expected_reward_of_policy": float((self.action_probs(states) * rewards).sum(axis=1).mean()),
         }
+
+    def _never_bet_params(self) -> dict[str, np.ndarray]:
+        """A policy that always passes: the safe default when nothing better is proven."""
+        params = {k: np.zeros_like(v) for k, v in self.params.items()}
+        params["b2"][0] = 8.0
+        return params
 
     # -- training -----------------------------------------------------------
 
@@ -241,11 +261,19 @@ class GRPOAgent:
         x = self._scale(states)
         optimizer = _Adam(self.params, config.learning_rate)
 
-        def validation_score() -> float:
-            return self.value(val_states, val_rewards)["mean_reward"]
+        def validation() -> dict:
+            return self.value(val_states, val_rewards)
 
-        best_score = validation_score()
-        best_params = {k: v.copy() for k, v in self.params.items()}
+        # The policy to beat is "never bet", which scores exactly zero. A
+        # trained policy replaces it only if, on games it did not train on, it
+        # does better than zero by a clear margin and better than any earlier
+        # round. When warm-starting, the current policy is also a candidate.
+        best_score, best_params, kept_round = 0.0, self._never_bet_params(), 0
+        if warm_start:
+            now = validation()
+            if now["mean_reward"] - config.evidence * now["standard_error"] > 0:
+                best_score, best_params = now["mean_reward"], {k: v.copy() for k, v in self.params.items()}
+                kept_round = len(self.history)
         stale = 0
         for iteration in range(iterations or config.iterations):
             log_old, _ = policy_log_probs(self.params, x)
@@ -260,15 +288,19 @@ class GRPOAgent:
                     loss, grads = grpo_loss_and_grads(
                         self.params, x[rows], actions[rows], advantages[rows], log_old[rows], config)
                     optimizer.step(self.params, grads)
-            score = validation_score()
+            held_back = validation()
+            score = held_back["mean_reward"]
             train_value = self.value(states, rewards)
             self.history.append({
                 "round": len(self.history) + 1, "loss": loss, "validation_reward": score,
+                "validation_bet_rate": held_back["bet_rate"],
                 "train_reward": train_value["mean_reward"], "train_bet_rate": train_value["bet_rate"],
             })
-            if score > best_score + 1e-9:
+            proven = score - config.evidence * held_back["standard_error"] > 0
+            if proven and score > best_score + 1e-9:
                 best_score, stale = score, 0
                 best_params = {k: v.copy() for k, v in self.params.items()}
+                kept_round = len(self.history)
             else:
                 stale += 1
                 if stale >= config.patience:
@@ -278,6 +310,8 @@ class GRPOAgent:
             "config": asdict(config), "actions": [list(a) for a in ACTIONS], "state_names": list(STATE_NAMES),
             "training_games": int(len(states)), "validation_games": int(len(val_states)),
             "best_validation_reward": float(best_score), "rounds_run": len(self.history),
+            "kept_round": kept_round,  # 0 means no round was proven better than never betting
+            "kept_never_bet_policy": kept_round == 0,
         }
         return self
 

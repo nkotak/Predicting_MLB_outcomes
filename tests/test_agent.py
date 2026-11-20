@@ -108,6 +108,21 @@ def test_agent_learns_to_pass_when_the_market_is_right():
     test_s, _, _ = _market(10000, 22, market_noise=0.0, model_noise=0.06)
     agent = GRPOAgent(config).fit(train_s, train_r, val_s, val_r)
     assert (agent.greedy_actions(test_s) == 0).mean() > 0.9
+    assert agent.info["best_validation_reward"] >= 0.0
+
+
+def test_never_bet_is_kept_when_nothing_is_proven_better():
+    # Pure noise: the "model" knows nothing and prices are fair plus a cut.
+    rng = np.random.default_rng(40)
+    config = GRPOConfig(iterations=25, patience=25, seed=2)
+    train_s, train_r, _ = _market(4000, 41, market_noise=0.0, model_noise=0.10)
+    val_s, val_r, _ = _market(1500, 42, market_noise=0.0, model_noise=0.10)
+    agent = GRPOAgent(config).fit(train_s, train_r, val_s, val_r)
+    assert agent.info["kept_never_bet_policy"] and agent.info["kept_round"] == 0
+    assert (agent.greedy_actions(val_s) == 0).all()
+    decisions = agent.decide(rng.uniform(0.4, 0.6, 50), np.full(50, 1.9), np.full(50, 1.9))
+    assert (decisions["side"] == "pass").all() and (decisions["stake"] == 0).all()
+    assert len(agent.history) > 0, "it still ran its learning rounds"
 
 
 def test_warm_start_keeps_learning_and_saves(tmp_path):
@@ -115,6 +130,7 @@ def test_warm_start_keeps_learning_and_saves(tmp_path):
     train_s, train_r, _ = _market(8000, 30, market_noise=0.07, model_noise=0.0)
     val_s, val_r, _ = _market(3000, 31, market_noise=0.07, model_noise=0.0)
     agent = GRPOAgent(config).fit(train_s, train_r, val_s, val_r)
+    assert not agent.info["kept_never_bet_policy"]
     rounds = len(agent.history)
     agent.fit(train_s, train_r, val_s, val_r, warm_start=True, iterations=5)
     assert len(agent.history) > rounds

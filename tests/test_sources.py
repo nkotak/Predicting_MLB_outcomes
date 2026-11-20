@@ -82,10 +82,33 @@ def test_closing_price_is_preferred_and_broken_markets_are_ignored():
 
 
 def test_consensus_takes_the_middle_book():
-    payload = {"items": [_book(f"Book {i}", h, a) for i, (h, a) in enumerate([(-150, 130), (-140, 120), (-400, 300)])]}
+    payload = {"items": [_book(f"Book {i}", h, a) for i, (h, a) in enumerate([(-150, 130), (-140, 120), (-165, 145)])]}
     price = espn.consensus(espn.slim_odds(payload))
     assert price["n_books"] == 3
-    assert price["home_dec"] == pytest.approx(1 + 100 / 150)  # the median, not pulled by the outlier
+    assert price["home_dec"] == pytest.approx(1 + 100 / 150)  # the median of the three
+    split = {"items": [_book("A", -300, 250), _book("B", 250, -300)]}  # two books that flatly disagree
+    assert espn.consensus(espn.slim_odds(split)) is None
+
+
+def test_opening_prices_are_kept_separately_from_closing_prices():
+    payload = {"items": [
+        _book("ESPN BET", 132, -160, close=("+132", "-160"), opening=("+150", "-180")),
+        _book("Bet365", 130, -155),  # no opening price recorded
+    ]}
+    price = espn.consensus(espn.slim_odds(payload))
+    assert price["n_books"] == 2
+    assert price["open_home_dec"] == pytest.approx(2.5) and price["open_away_dec"] == pytest.approx(1 + 100 / 180)
+    assert price["open_market_home_prob"] < price["market_home_prob"]  # the home side shortened during the day
+    no_open = espn.consensus(espn.slim_odds({"items": [_book("Bet365", 130, -155)]}))
+    assert "open_home_dec" not in no_open
+
+
+def test_a_book_far_from_the_others_is_dropped():
+    prices = [(-150, 130), (-145, 125), (-155, 135), (-1200, 700)]  # the last one is an in-game price
+    payload = {"items": [_book(f"Book {i}", h, a) for i, (h, a) in enumerate(prices)]}
+    price = espn.consensus(espn.slim_odds(payload))
+    assert price["n_books"] == 3
+    assert price["home_dec"] == pytest.approx(1 + 100 / 150)
 
 
 def test_scoreboard_is_reduced_to_what_is_needed():

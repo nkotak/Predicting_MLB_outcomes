@@ -16,9 +16,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from . import backtest, build, evaluate, features, teams
+from . import backtest, build, evaluate, features
 from .agent import GRPOAgent, GRPOConfig, reward_table, state_matrix
-from .betting import ThresholdRule, decimal_to_american, edge, settle, simulate
+from .betting import ThresholdRule, decimal_to_american, edge, fair_probabilities, settle, simulate
 from .config import models_dir, predictions_path
 from .model import WinModel
 
@@ -64,7 +64,7 @@ def train(*, seed: int = 7) -> dict:
     model.save(models_dir())
 
     preds = evaluate.walk_forward(frame, seed=seed)
-    priced = backtest.priced_predictions(preds, tables["odds"])
+    priced = backtest.usable(backtest.priced_predictions(preds, tables["odds"]), backtest.CLOSE)
     priced_seasons = sorted(int(s) for s in priced["season"].unique())
     info = {"model": model.info}
     if len(priced_seasons) >= 3:
@@ -95,7 +95,17 @@ def learn(*, rounds: int = 20, window_seasons: int = 4) -> dict:
     tables = build.load()
     frame = features.build_features(tables["games"], tables["team_games"], tables["pitcher_games"])
     preds = evaluate.walk_forward(frame)
-    priced = backtest.priced_predictions(preds, tables["odds"])
+    priced = backtest.usable(backtest.priced_predictions(preds, tables["odds"]), backtest.CLOSE).copy()
+    # Where a prediction was logged before the game, learn from the forecast
+    # and the price that were actually on the screen at that moment, not from
+    # the closing price worked out afterwards.
+    seen = latest_per_game(read_log())
+    seen = seen[seen["made_before_game"] & seen["graded"] & seen["home_dec"].notna()].set_index("game_id")
+    hit = priced["game_id"].isin(seen.index)
+    if hit.any():
+        ids = priced.loc[hit, "game_id"]
+        for column, source in (("p_model", "p_home"), ("home_dec", "home_dec"), ("away_dec", "away_dec")):
+            priced.loc[hit, column] = ids.map(seen[source]).to_numpy()
     seasons = sorted(int(s) for s in priced["season"].unique())[-window_seasons:]
     recent = priced[priced["season"].isin(seasons)].sort_values("date")
     cut = int(len(recent) * 0.75)
@@ -115,6 +125,8 @@ def learn(*, rounds: int = 20, window_seasons: int = 4) -> dict:
         "updated_utc": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "games_learned_from": int(len(fit_rows)), "games_held_back": int(len(val_rows)),
         "newest_game": recent["date"].max().strftime("%Y-%m-%d"),
+        "games_using_logged_prices": int(hit.sum()),
+        "kept_never_bet_policy": bool(agent.info["kept_never_bet_policy"]),
         "held_back_reward_before": before["mean_reward"], "held_back_reward_after": after["mean_reward"],
         "bet_rate_before": before["bet_rate"], "bet_rate_after": after["bet_rate"],
     }
@@ -273,10 +285,14 @@ def scorecard(path: Path | None = None) -> dict:
                     "away_dec": priced["away_dec"], "home_win": priced["home_win"],
                 })
                 run = simulate(bets)
-                entry[f"{who}_paper_bets"] = {k: v for k, v in run.items() if k != "bankroll_by_day"}
+                summary = {k: v for k, v in run.items() if k != "bankroll_by_day"}
+                closed = priced["close_home_dec"].notna() & priced["close_away_dec"].notna()
+                if closed.any():
+                    fair_home, _ = fair_probabilities(priced.loc[closed, "close_home_dec"],
+                                                      priced.loc[closed, "close_away_dec"])
+                    summary["value_against_close"] = backtest.value_against_close(
+                        bets[closed.to_numpy()].assign(close_home_prob=np.asarray(fair_home)))
+                entry[f"{who}_paper_bets"] = summary
         out[label] = entry
     return out
 
-
-def team_label(code: str) -> str:
-    return teams.name(code)

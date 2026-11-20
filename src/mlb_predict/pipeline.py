@@ -54,6 +54,8 @@ def update(*, days_back: int = 4, days_ahead: int = 3) -> dict:
         if mlbapi.fetch_schedule(season, refresh=True):
             new_boxes += mlbapi.fetch_boxscores(season)
     window = [today + dt.timedelta(days=offset) for offset in range(-days_back, days_ahead + 1)]
-    requests = espn.fetch_odds(window, refresh_from=today - dt.timedelta(days=1))
+    # Every day in the window is downloaded again: upcoming games because their
+    # prices keep moving, recent games so the stored price is the closing one.
+    requests = espn.fetch_odds(window, refresh_from=window[0])
     report = build.run()
     return {"new_box_scores": new_boxes, "odds_requests": requests, "build": report}

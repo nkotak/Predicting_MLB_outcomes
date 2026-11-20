@@ -107,8 +107,9 @@ def test_checks_catch_broken_data(tables):
     assert "unknown team codes" in _problems(broken)
 
 
-def test_in_game_prices_are_caught():
+def test_in_game_prices_are_caught(monkeypatch):
     """If favourites win far too often, the prices were taken during the game."""
+    monkeypatch.setattr(build, "MIN_GAMES_FOR_MARKET_CHECK", 300)
     made = make_league(seed=4, seasons=(2015,), days=160, scheduled=0)
     games = made["games"]
     home_won = games["home_score"] > games["away_score"]

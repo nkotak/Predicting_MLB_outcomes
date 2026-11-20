@@ -128,8 +128,11 @@ def make_odds(tables, seed: int = 9, noise: float = 0.03, cut: float = 0.04) -> 
     frame = build_features(tables["games"], tables["team_games"], tables["pitcher_games"])
     fair = 1.0 / (1.0 + 10.0 ** (-(frame["d_elo"] + 24.0) / 400.0))
     fair = np.clip(fair + 0.15 * frame["d_sp_k"].fillna(0) * 4 + rng.normal(0, noise, len(frame)), 0.2, 0.8)
+    opening = np.clip(fair + rng.normal(0, 0.025, len(frame)), 0.2, 0.8)  # the early price is a bit noisier
     return pd.DataFrame({
         "game_id": frame["game_id"], "event_id": [str(i) for i in range(len(frame))],
         "home_dec": 1.0 / (fair * (1 + cut)), "away_dec": 1.0 / ((1 - fair) * (1 + cut)),
-        "market_home_prob": fair, "n_books": 5, "odds_fetched_utc": "2021-01-01T00:00:00Z",
+        "market_home_prob": fair, "n_books": 5,
+        "open_home_dec": 1.0 / (opening * (1 + cut)), "open_away_dec": 1.0 / ((1 - opening) * (1 + cut)),
+        "open_market_home_prob": opening, "odds_fetched_utc": "2021-01-01T00:00:00Z",
     })

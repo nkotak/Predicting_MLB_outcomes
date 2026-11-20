@@ -140,6 +140,8 @@ def cmd_learn(args) -> int:
     print(f"On the {entry['games_held_back']} most recent games it was not shown, its average result went from "
           f"{entry['held_back_reward_before']:+.4f} to {entry['held_back_reward_after']:+.4f} (percent of bankroll per game). "
           f"It bets on {_pct(entry['bet_rate_after'])} of games, was {_pct(entry['bet_rate_before'])}.")
+    if entry["kept_never_bet_policy"]:
+        print("No betting policy was proven better than not betting, so the agent will keep passing.")
     return 0
 
 
@@ -164,8 +166,11 @@ def cmd_scorecard(args) -> int:
             print(f"  Market: {market['games']} games, {_pct(market['accuracy'])} correct, log loss {market['log_loss']:.4f}")
             for who, name in (("agent", "GRPO agent"), ("rule", "Edge rule")):
                 run = block[f"{who}_paper_bets"]
-                print(f"  {name}: {run['bets']} paper bets, return per unit staked {_pct(run['roi'])}, "
-                      f"bankroll {run['start_bankroll']:.0f} to {run['final_bankroll']:.0f}")
+                line = (f"  {name}: {run['bets']} paper bets, return per unit staked {_pct(run['roi'])}, "
+                        f"bankroll {run['start_bankroll']:.0f} to {run['final_bankroll']:.0f}")
+                if run["bets"] and run.get("value_against_close") == run.get("value_against_close"):
+                    line += f", price taken vs fair closing price {_pct(run['value_against_close'], 2)}"
+                print(line)
     return 0
 
 

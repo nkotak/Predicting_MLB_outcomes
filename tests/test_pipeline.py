@@ -85,6 +85,28 @@ def test_betting_report_compares_strategies_on_unseen_seasons(big_league, preds)
     # Blindly backing one kind of team at prices with a 4% cut loses money.
     assert report["overall"]["always_favourite"]["roi"] < 0.02
     assert report["overall"]["always_home"]["bets"] == report["games"]
+    # At the closing price a bet cannot beat the close: it gives up about half the cut.
+    assert report["overall"]["always_home"]["value_against_close"] == pytest.approx(-0.04 / 1.04, abs=1e-6)
+
+
+def test_early_price_report_and_line_movement(big_league, preds):
+    priced = backtest.priced_predictions(preds, make_odds(big_league))
+    early = backtest.betting_report(priced, prices=backtest.OPEN, min_train_seasons=1)
+    assert early["seasons"] == [2019, 2020, 2021]  # one training season is enough here
+    move = backtest.line_movement(priced)
+    assert move["games"] == len(priced) and move["log_loss_closing_price"] < move["log_loss_opening_price"]
+    assert -1 < move["correlation"] < 1 and move["average_move_points"] > 0
+    assert backtest.line_movement(priced.drop(columns=["open_home_dec"]))["games"] == 0
+
+
+def test_value_against_close_by_hand():
+    bets = pd.DataFrame({
+        "side": ["home", "away", "pass"], "home_dec": [2.2, 1.8, 2.0], "away_dec": [1.7, 2.1, 1.9],
+        "close_home_prob": [0.5, 0.55, 0.5],
+    })
+    # home at 2.2 when the fair close is 50%: +10%. away at 2.1 when the fair close is 45%: -5.5%.
+    assert backtest.value_against_close(bets) == pytest.approx((2.2 * 0.5 - 1 + 2.1 * 0.45 - 1) / 2)
+    assert np.isnan(backtest.value_against_close(bets[bets["side"] == "pass"]))
 
 
 def test_command_line_flow_from_build_to_scorecard(big_league, tmp_path, monkeypatch, capsys):
@@ -147,3 +169,29 @@ def test_helpful_errors_instead_of_tracebacks(tmp_path, monkeypatch, capsys):
     assert "mlb fetch" in capsys.readouterr().err
     with pytest.raises(SystemExit):
         cli.main(["predict", "--date", "April 2"])
+
+
+def test_results_page_is_written_from_the_saved_backtest(big_league, preds, tmp_path, monkeypatch):
+    from mlb_predict import report
+    monkeypatch.setenv("MLB_DATA_DIR", str(tmp_path / "data"))
+    odds = make_odds(big_league)
+    priced = backtest.priced_predictions(preds, odds)
+    early = backtest.betting_report(priced, prices=backtest.OPEN, min_train_seasons=1)
+    early["line_movement"] = backtest.line_movement(priced)
+    result = {"test_seasons": sorted(int(s) for s in preds["season"].unique()), "games_tested": len(preds),
+              "inputs": list(features.FEATURES), "forecast": evaluate.summarize(preds, odds),
+              "betting": backtest.betting_report(priced), "early_prices": early}
+    (tmp_path / "reports").mkdir()
+    (tmp_path / "reports" / "backtest.json").write_text(json.dumps(result, default=float))
+    page = report.write_page(tmp_path / "reports" / "index.html").read_text()
+    assert page.startswith("<!doctype html>") and page.rstrip().endswith("</html>")
+    for expected in ("How good are the forecasts?", "Against the betting market", "Paper betting at closing prices",
+                     "Betting early, at opening prices", "copyrighted by Retrosheet", "<svg"):
+        assert expected in page
+    assert "—" not in page and "nan%" not in page
+    markdown = report.backtest_markdown(json.loads((tmp_path / "reports" / "backtest.json").read_text()))
+    assert "## Paper betting at closing prices" in markdown and "## Betting early, at opening prices" in markdown
+    fragment = report.render_page(result, fragment=True)
+    assert fragment.startswith("<title>") and "</html>" not in fragment
+    with pytest.raises(FileNotFoundError):
+        report.write_page(tmp_path / "elsewhere" / "index.html")

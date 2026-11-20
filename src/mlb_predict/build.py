@@ -27,6 +27,10 @@ from .sources import crosswalk, espn, mlbapi, retrosheet
 log = logging.getLogger(__name__)
 
 TABLES = ("games", "team_games", "pitcher_games", "players", "odds")
+# Favourites at pre-game prices win about 57 to 59 percent of MLB games. A
+# season well above that, on a large sample, means in-game prices got in.
+MIN_GAMES_FOR_MARKET_CHECK = 1500
+MAX_FAVOURITE_WIN_RATE = 0.615
 
 
 class DataCheckError(RuntimeError):
@@ -162,7 +166,8 @@ def match_odds(games: pd.DataFrame, events: pd.DataFrame) -> pd.DataFrame:
     lower game number. An event that finds no game on its own date is tried
     against the day before and after, which covers suspended and moved games.
     """
-    columns = ["game_id", "event_id", "home_dec", "away_dec", "market_home_prob", "n_books", "odds_fetched_utc"]
+    columns = ["game_id", "event_id", "home_dec", "away_dec", "market_home_prob", "n_books",
+               "open_home_dec", "open_away_dec", "open_market_home_prob", "odds_fetched_utc"]
     if events.empty:
         return pd.DataFrame(columns=columns)
     events = events.copy()
@@ -280,7 +285,7 @@ def check(tables: dict[str, pd.DataFrame]) -> dict:
             rate = fav_won.groupby(priced["season"]).agg(["mean", "size"])
             report["market_favourite_win_rate"] = {int(k): round(float(v), 4) for k, v in rate["mean"].items()}
             for season, row in rate.iterrows():
-                if row["size"] >= 500 and row["mean"] > 0.615:
+                if row["size"] >= MIN_GAMES_FOR_MARKET_CHECK and row["mean"] > MAX_FAVOURITE_WIN_RATE:
                     problems.append(
                         f"season {season}: market favourites won {row['mean']:.1%}, too high for pre-game "
                         "prices. The odds for this season look like in-game prices."

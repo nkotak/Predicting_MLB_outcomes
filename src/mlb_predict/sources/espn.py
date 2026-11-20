@@ -202,29 +202,18 @@ def american_to_decimal(american: float) -> float:
 NOT_A_PREGAME_BOOK = ("live", "consensus", "numberfire", "teamrankings", "accuscore")
 
 
+MAX_BOOK_DISAGREEMENT = 0.08  # in win-chance points
+
+
 def is_pregame_book(name: str | None) -> bool:
     lowered = (name or "").lower()
     return bool(lowered) and not any(word in lowered for word in NOT_A_PREGAME_BOOK)
 
 
-def consensus(books: list[dict]) -> dict | None:
-    """Middle-of-the-market closing price across sportsbooks for one game.
-
-    For each book the closing price is used when ESPN records one, otherwise
-    the stored price. The bookmaker's margin is removed to get a fair home win
-    chance, and the consensus is the median across books, which is not thrown
-    off by one stale or mistyped price. Books whose two prices do not form a
-    sensible market are ignored.
-    """
+def _middle_price(prices: list[tuple[float, float]]) -> dict | None:
+    """Median price across books, after dropping broken markets and outliers."""
     home_dec, away_dec, fair = [], [], []
-    for book in books:
-        if not is_pregame_book(book.get("book")):
-            continue
-        home, away = book.get("home_close"), book.get("away_close")
-        if home is None or away is None:
-            home, away = book.get("home"), book.get("away")
-        if home is None or away is None:
-            continue
+    for home, away in prices:
         dh, da = american_to_decimal(home), american_to_decimal(away)
         total = 1.0 / dh + 1.0 / da
         if not 1.0 <= total <= 1.15:  # not a real two-way market
@@ -234,12 +223,45 @@ def consensus(books: list[dict]) -> dict | None:
         fair.append((1.0 / dh) / total)
     if not fair:
         return None
-    return {
-        "home_dec": float(np.median(home_dec)),
-        "away_dec": float(np.median(away_dec)),
-        "market_home_prob": float(np.median(fair)),
-        "n_books": len(fair),
-    }
+    # Pre-game books agree with each other to within a few points. A book far
+    # from the rest is stale, mistyped or an in-game price under another name.
+    fair_arr, home_arr, away_arr = np.array(fair), np.array(home_dec), np.array(away_dec)
+    keep = np.abs(fair_arr - np.median(fair_arr)) <= MAX_BOOK_DISAGREEMENT
+    if not keep.any():  # the books disagree too much to call anything a market price
+        return None
+    return {"home_dec": float(np.median(home_arr[keep])), "away_dec": float(np.median(away_arr[keep])),
+            "market_home_prob": float(np.median(fair_arr[keep])), "n_books": int(keep.sum())}
+
+
+def consensus(books: list[dict]) -> dict | None:
+    """Middle-of-the-market price across sportsbooks for one game.
+
+    The main price is the closing price where ESPN records one, otherwise the
+    stored price (for a game that has not started, that is the current price).
+    For each book the bookmaker's margin is removed to get a fair home win
+    chance, and the consensus is the median across books.
+
+    Where books also record an opening price, the same is done for it and
+    returned under ``open_`` names. Opening prices exist for recent seasons only.
+    """
+    books = [b for b in books if is_pregame_book(b.get("book"))]
+    closing, opening = [], []
+    for book in books:
+        home, away = book.get("home_close"), book.get("away_close")
+        if home is None or away is None:
+            home, away = book.get("home"), book.get("away")
+        if home is not None and away is not None:
+            closing.append((home, away))
+        if book.get("home_open") is not None and book.get("away_open") is not None:
+            opening.append((book["home_open"], book["away_open"]))
+    price = _middle_price(closing)
+    if price is None:
+        return None
+    early = _middle_price(opening)
+    if early is not None:
+        price.update({"open_home_dec": early["home_dec"], "open_away_dec": early["away_dec"],
+                      "open_market_home_prob": early["market_home_prob"]})
+    return price
 
 
 def events_frame(dates: list[dt.date]) -> pd.DataFrame:
