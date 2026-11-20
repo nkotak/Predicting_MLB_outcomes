@@ -1,0 +1,59 @@
+"""Downloading: the first full download and the small daily refresh."""
+
+from __future__ import annotations
+
+import datetime as dt
+import logging
+
+import pandas as pd
+
+from . import build
+from .config import FIRST_ODDS_SEASON, FIRST_SEASON
+from .sources import crosswalk, espn, mlbapi, retrosheet
+
+log = logging.getLogger(__name__)
+
+
+def _mlb_seasons(today: dt.date, first: int) -> list[int]:
+    """Seasons that have to come from MLB's feed: not on Retrosheet yet, plus next year."""
+    return [s for s in range(first, today.year + 2) if not retrosheet.zip_path(s).exists()]
+
+
+def fetch_all(*, first_season: int = FIRST_SEASON, odds: bool = True, refresh: bool = False) -> dict:
+    """Download everything needed from scratch. Safe to stop and run again."""
+    today = dt.date.today()
+    published = [s for s in range(first_season, today.year + 1) if retrosheet.fetch(s, refresh=refresh)]
+    log.info("Retrosheet seasons available: %s to %s", published[0] if published else None,
+             published[-1] if published else None)
+    crosswalk.fetch(refresh=refresh)
+    from_mlb = []
+    for season in _mlb_seasons(today, first_season):
+        games = mlbapi.fetch_schedule(season, refresh=True)
+        if not games:
+            continue
+        from_mlb.append(season)
+        mlbapi.fetch_boxscores(season)
+    summary = {"retrosheet_seasons": published, "mlb_seasons": from_mlb, "odds_requests": 0}
+    if odds:
+        games = build.combine(first_season)["games"]
+        dates = [d.date() for d in pd.to_datetime(games.loc[games["season"] >= FIRST_ODDS_SEASON, "date"].unique())]
+        past = [d for d in dates if d <= today + dt.timedelta(days=3)]
+        summary["odds_requests"] = espn.fetch_odds(past, refresh_from=today - dt.timedelta(days=1))
+    return summary
+
+
+def update(*, days_back: int = 4, days_ahead: int = 3) -> dict:
+    """Daily refresh: new results, current starters, current prices. Then rebuild.
+
+    Only the season in progress and the next few days are downloaded again.
+    """
+    today = dt.date.today()
+    seasons = [s for s in (today.year, today.year + 1) if not retrosheet.zip_path(s).exists()]
+    new_boxes = 0
+    for season in seasons:
+        if mlbapi.fetch_schedule(season, refresh=True):
+            new_boxes += mlbapi.fetch_boxscores(season)
+    window = [today + dt.timedelta(days=offset) for offset in range(-days_back, days_ahead + 1)]
+    requests = espn.fetch_odds(window, refresh_from=today - dt.timedelta(days=1))
+    report = build.run()
+    return {"new_box_scores": new_boxes, "odds_requests": requests, "build": report}

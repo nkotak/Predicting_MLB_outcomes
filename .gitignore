@@ -1,0 +1,14 @@
+# Data is downloaded and rebuilt by `mlb fetch` / `mlb build`; it is never committed.
+data/
+models/
+*.egg-info/
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+.ipynb_checkpoints/
+.DS_Store
+dist/
+build/
+.coverage
