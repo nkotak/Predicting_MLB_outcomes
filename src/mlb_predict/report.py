@@ -130,10 +130,11 @@ def backtest_markdown(result: dict) -> str:
             "|---|---:|---:|---:|---:|---:|---:|"]
     for season, block in forecast["by_season"].items():
         market = block.get("market")
+        market_loss = f"{market['log_loss']:.4f}" if market else ""
         out.append(
             f"| {season} | {block['model']['games']:,} | {pct(block['always_home']['accuracy'])} | "
             f"{pct(block['model']['accuracy'])} | {pct(market['accuracy']) if market else 'no odds'} | "
-            f"{block['model']['log_loss']:.4f} | {f'{market['log_loss']:.4f}' if market else ''} |")
+            f"{block['model']['log_loss']:.4f} | {market_loss} |")
     if betting.get("seasons"):
         out += [
             "", "## Paper betting at closing prices", "",
@@ -407,10 +408,11 @@ def render_page(result: dict, predictions=None, card: dict | None = None, hero_i
              "<th class='n'>Model log loss</th><th class='n'>Market log loss</th></tr></thead><tbody>"]
     for season, block in result["forecast"]["by_season"].items():
         mk = block.get("market")
+        market_loss = f"{mk['log_loss']:.4f}" if mk else ""
         html.append(f'<tr><td>{season}</td><td class="n">{block["model"]["games"]:,}</td>'
                     f'<td class="n">{pct(block["always_home"]["accuracy"])}</td><td class="n">{pct(block["model"]["accuracy"])}</td>'
                     f'<td class="n">{pct(mk["accuracy"]) if mk else "no odds"}</td>'
-                    f'<td class="n">{block["model"]["log_loss"]:.4f}</td><td class="n">{f"{mk["log_loss"]:.4f}" if mk else ""}</td></tr>')
+                    f'<td class="n">{block["model"]["log_loss"]:.4f}</td><td class="n">{market_loss}</td></tr>')
     html.append("</tbody></table></div></details></div>")
     html.append('<div class="card scroll"><table><thead><tr><th>Forecaster</th><th class="n">Correct</th>'
                 '<th class="n">Log loss</th><th class="n">Calibration error</th></tr></thead><tbody>')
