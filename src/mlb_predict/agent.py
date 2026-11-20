@@ -105,11 +105,12 @@ class GRPOConfig:
     epochs: int = 3  # passes over each round's samples
     batch_size: int = 4096
     weight_decay: float = 1e-4
-    patience: int = 15  # stop after this many rounds without a better validation result
+    patience: int = 40  # stop after this many rounds without a better validation result
     # How much better than "never bet" a policy must look on held-back games
-    # before it is trusted, in standard errors. Game results are very noisy,
-    # so without this bar a policy that got lucky would be kept.
-    evidence: float = 1.0
+    # before it is trusted, in standard errors. Game results are very noisy and
+    # many rounds are compared, so without a firm bar a policy that got lucky
+    # on the held-back games would be kept.
+    evidence: float = 2.0
     seed: int = 3
 
 
@@ -313,6 +314,14 @@ class GRPOAgent:
             "kept_round": kept_round,  # 0 means no round was proven better than never betting
             "kept_never_bet_policy": kept_round == 0,
         }
+        if self.history:
+            first, last = self.history[0], self.history[-1]
+            self.info.update({
+                # How the policy changed while it trained, whether or not it was kept.
+                "bet_rate_first_round": first["train_bet_rate"], "bet_rate_last_round": last["train_bet_rate"],
+                "train_reward_first_round": first["train_reward"], "train_reward_last_round": last["train_reward"],
+                "validation_reward_last_round": last["validation_reward"],
+            })
         return self
 
     # -- using the agent ----------------------------------------------------

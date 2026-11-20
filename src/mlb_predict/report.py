@@ -154,6 +154,7 @@ def backtest_markdown(result: dict) -> str:
                 "| Season | Trained on | Checked on | Result of training | Bets | Return per unit | Edge rule return per unit |",
                 "|---|---|---|---|---:|---:|---:|"]
         out += _agent_rows(betting)
+        out += ["", _learning_sentence(betting)]
     early = result.get("early_prices", {})
     move = early.get("line_movement", {})
     if move.get("games"):
@@ -218,13 +219,27 @@ def _strategy_table(betting: dict, *, with_close: bool) -> list[str]:
     return rows
 
 
+def _learning_sentence(betting: dict) -> str:
+    """One plain sentence on how the agent's behaviour changed while it trained."""
+    notes = [n for n in betting.get("agent_training", {}).values() if "bet_rate_first_round" in n]
+    if not notes:
+        return ""
+    first = sum(n["bet_rate_first_round"] for n in notes) / len(notes)
+    last = sum(n["bet_rate_last_round"] for n in notes) / len(notes)
+    held = sum(n["validation_reward_last_round"] for n in notes) / len(notes)
+    verdict = ("did not make money" if held <= 0 else "made a little, though not enough to rule out luck")
+    return (f"What the learning looked like: averaged over these seasons, the agent started out betting on "
+            f"{pct(first, 0)} of its training games and ended up betting on {pct(last, 0)}. "
+            f"On the held-back season, what it still wanted to bet on {verdict}.")
+
+
 def _agent_rows(betting: dict) -> list[str]:
     rows = []
     for season, block in betting["by_season"].items():
         agent, rule = block.get("grpo_agent"), block.get("edge_rule")
         note = betting["agent_training"].get(season) or betting["agent_training"].get(str(season)) or {}
         trained = note.get("train_seasons") or []
-        span = f"{trained[0]} to {trained[-1]}" if trained else ""
+        span = "" if not trained else (str(trained[0]) if trained[0] == trained[-1] else f"{trained[0]} to {trained[-1]}")
         outcome = "kept never-bet" if note.get("kept_never_bet_policy") else "a betting policy was proven"
         rows.append(f"| {season} | {span} | {note.get('validation_season', '')} | {outcome} | "
                     f"{agent['bets'] if agent else 0:,} | "
@@ -377,6 +392,8 @@ def render_page(result: dict, predictions=None, card: dict | None = None, hero_i
     seasons = result["test_seasons"]
     hero_style = f' style="background-image:url({_esc(hero_image)})"' if hero_image else ""
     head = "<title>MLB Predict Results</title>" + f"<style>{PAGE_CSS}</style>"
+    if fragment:
+        head = '<meta name="claude:viewport-fit-sides" content="cover">' + head
     html = [
         head if fragment else
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
@@ -446,7 +463,7 @@ def render_page(result: dict, predictions=None, card: dict | None = None, hero_i
         html.append(f"<p class='note'>The learning agent (GRPO) is retrained before each season on earlier seasons only. "
                     f"In {len(kept)} of {total} seasons, no betting policy was proven better than not betting on the "
                     "held-back season, so it passed on every game. Passing is a real result: it means the evidence did "
-                    "not support betting at these prices.</p></section>")
+                    f"not support betting at these prices.</p><p class='note'>{_esc(_learning_sentence(betting))}</p></section>")
 
     if move.get("games"):
         html += ["<section><h2>Betting early, at opening prices</h2>",
@@ -465,7 +482,8 @@ def render_page(result: dict, predictions=None, card: dict | None = None, hero_i
                     "set before a late pitching change could not have known that, which flatters these numbers by an "
                     "unknown amount. The prediction log measures this fairly from now on.</p></section>")
 
-    if predictions is not None and len(predictions):
+    tables = predictions if isinstance(predictions, list) else ([] if predictions is None else [predictions])
+    for predictions in [t for t in tables if len(t)]:
         day = str(predictions["date"].iloc[0])[:10]
         replay = not bool(predictions["made_before_game"].all())
         html += [f"<section><h2>Games on {day}</h2>",
@@ -520,16 +538,117 @@ def write_page(out: Path = Path("reports/index.html"), *, date=None) -> Path:
         log_frame = predict.latest_per_game(predict.read_log())
         if len(log_frame):
             card = predict.scorecard()
-            day = log_frame["date"].max() if date is None else date
-            shown = log_frame[log_frame["date"] == day].copy()
-            if len(shown):
-                from .betting import edge
-                shown["edge_home"] = edge(shown["p_home"], shown["home_dec"])
-                shown["edge_away"] = edge(1.0 - shown["p_home"], shown["away_dec"])
-                predictions = shown.sort_values("game_id")
+            from .betting import edge
+            log_frame["edge_home"] = edge(log_frame["p_home"], log_frame["home_dec"])
+            log_frame["edge_away"] = edge(1.0 - log_frame["p_home"], log_frame["away_dec"])
+            # Show the most recent day logged before its games, and the most
+            # recent replayed day, when the log has them.
+            predictions = []
+            for before in (True, False):
+                part = log_frame[log_frame["made_before_game"] == before]
+                if date is not None:
+                    part = part[part["date"] == date]
+                if len(part):
+                    predictions.append(part[part["date"] == part["date"].max()].sort_values("game_id"))
     except FileNotFoundError:
         pass
     hero = "assets/hero.jpg" if (out.parent / "assets" / "hero.jpg").exists() else None
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(render_page(result, predictions, card, hero))
     return out
+
+
+# ---------------------------------------------------------------------------
+# Keeping the README's results section in step with the latest backtest
+# ---------------------------------------------------------------------------
+
+README_START = "<!-- results:start (written by `mlb backtest`, do not edit by hand) -->"
+README_END = "<!-- results:end -->"
+
+
+def readme_block(result: dict) -> str:
+    """The plain-language results summary that sits at the top of the README."""
+    overall, betting = result["forecast"]["overall"], result.get("betting", {})
+    early = result.get("early_prices", {})
+    move = early.get("line_movement", {})
+    model, home = overall["model"], overall["always_home"]
+    seasons = result["test_seasons"]
+    out = [
+        "## What the results say",
+        "",
+        f"Tested on **{model['games']:,} games** from {season_span(seasons)}. Every season was predicted by a "
+        "model that had never seen it.",
+        "",
+        "| Forecaster | Games | Called correctly |",
+        "|---|---:|---:|",
+        f"| This model | {model['games']:,} | **{pct(model['accuracy'])}** |",
+        f"| Team rating (Elo) on its own | {model['games']:,} | {pct(overall['team_rating_only']['accuracy'])} |",
+        f"| Always picking the home team | {model['games']:,} | {pct(home['accuracy'])} |",
+    ]
+    market = overall.get("market")
+    if market:
+        priced = overall["model_on_priced_games"]
+        gap = overall["model_minus_market_log_loss"]
+        out += [
+            f"| Betting market's closing price | {market['games']:,} | **{pct(market['accuracy'])}** |",
+            f"| This model, on those same games | {market['games']:,} | {pct(priced['accuracy'])} |",
+            "",
+            "In plain words:",
+            "",
+            f"- **The model is real.** It beats always picking the home team by "
+            f"{100 * overall['model_minus_always_home_accuracy']['diff']:.1f} points, and it cannot see a game's "
+            "own result.",
+        ]
+        if gap["low"] > 0:
+            out.append("- **It does not beat the betting market.** The closing price is the better forecaster "
+                       f"(log loss {market['log_loss']:.4f} against {priced['log_loss']:.4f}, and the gap is "
+                       "larger than chance).")
+        elif gap["high"] < 0:
+            out.append("- **It beats the betting market's closing price** on log loss "
+                       f"({priced['log_loss']:.4f} against {market['log_loss']:.4f}, and the gap is larger than chance).")
+        else:
+            out.append("- **It is about level with the betting market.** The gap between the two is within chance "
+                       f"(log loss {priced['log_loss']:.4f} against {market['log_loss']:.4f}).")
+    if betting.get("seasons"):
+        runs = betting["overall"]
+        blind = [runs[k]["roi"] for k in ("always_home", "always_favourite", "always_underdog") if k in runs]
+        agent, rule = runs.get("grpo_agent"), runs.get("edge_rule")
+        line = (f"- **Paper betting at closing prices has not made money** ({season_span(betting['seasons'])}, "
+                f"{betting['games']:,} games). Blind strategies lost {pct(-max(blind))} to {pct(-min(blind))} per "
+                "unit staked, which is the bookmaker's cut.")
+        if rule and rule["bets"]:
+            line += f" A fixed \"bet when the model sees a 3% edge\" rule returned {pct(rule['roi'])}."
+        out.append(line)
+        notes = betting.get("agent_training", {})
+        kept = sum(1 for n in notes.values() if n.get("kept_never_bet_policy"))
+        if agent is not None:
+            if agent["bets"] == 0:
+                out.append(f"- **The learning agent chose not to bet.** In all {len(notes)} test seasons, no betting "
+                           "policy it learned was proven better than not betting, so it passed on every game. "
+                           "That is the right call given the line above.")
+            else:
+                out.append(f"- **The learning agent bet very rarely.** It passed entirely in {kept} of {len(notes)} "
+                           f"test seasons and placed {agent['bets']:,} paper bets in total "
+                           f"(return per unit {pct(agent['roi'])}, far too few bets to mean anything).")
+    if move.get("games"):
+        out.append(f"- **One promising signal: early prices.** When the model disagrees with the opening price, the "
+                   f"price tends to move toward the model by game time ({move['games']:,} games, "
+                   f"{season_span(move['seasons'])}). That has not yet turned into profit after the bookmaker's cut. "
+                   "The prediction log is there to test it fairly from now on.")
+    out += ["",
+            "Full numbers, season by season: [reports/BACKTEST.md](reports/BACKTEST.md). "
+            "The same results as a page: `reports/index.html`."]
+    return "\n".join(out)
+
+
+def update_readme(result: dict, path: Path = Path("README.md")) -> bool:
+    """Rewrite the results section of the README, if the README has the markers for it."""
+    if not path.exists():
+        return False
+    text = path.read_text()
+    if README_START not in text or README_END not in text:
+        return False
+    head, rest = text.split(README_START, 1)
+    _, tail = rest.split(README_END, 1)
+    path.write_text(f"{head}{README_START}\n{readme_block(result)}\n{README_END}{tail}")
+    return True

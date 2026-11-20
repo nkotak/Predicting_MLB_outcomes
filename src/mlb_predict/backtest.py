@@ -96,6 +96,9 @@ def agent_walk_forward(priced: pd.DataFrame, config: GRPOConfig | None = None, *
             "kept_never_bet_policy": agent.info["kept_never_bet_policy"],
             "best_validation_reward": agent.info["best_validation_reward"],
             "bet_rate": float((choice["side"] != "pass").mean()),
+            **{k: agent.info[k] for k in ("bet_rate_first_round", "bet_rate_last_round",
+                                          "train_reward_first_round", "train_reward_last_round",
+                                          "validation_reward_last_round") if k in agent.info},
         }
         log.info("agent %d: trained on %s, bet on %.1f%% of games", test_season, earlier[:-1],
                  100 * notes[test_season]["bet_rate"])

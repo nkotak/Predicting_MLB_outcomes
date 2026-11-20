@@ -1,0 +1,105 @@
+# Backtest results
+
+Generated 2026-11-20 by `mlb backtest`. Do not edit by hand.
+
+**27,619 games**, seasons 2015 to 2026. Every season was predicted by a model that was trained and calibrated only on earlier seasons.
+
+## How good are the forecasts?
+
+"Correct" is the share of games where the side given the higher chance won. "Log loss" scores the probabilities themselves and lower is better. A coin flip scores 0.6931.
+
+| Forecaster | Games | Correct | Log loss | Brier | Calibration error |
+|---|---:|---:|---:|---:|---:|
+| Model | 27,619 | 57.2% | 0.6765 | 0.2418 | 0.46% |
+| Logistic regression part only | 27,619 | 57.2% | 0.6764 | 0.2418 | 0.69% |
+| Boosted trees part only | 27,619 | 57.3% | 0.6777 | 0.2424 | 0.61% |
+| Team rating (Elo) only | 27,619 | 56.6% | 0.6787 | 0.2429 | 0.40% |
+| Always pick the home team | 27,619 | 53.3% | 0.6910 | 0.2489 | 0.02% |
+
+Model compared with always picking the home team: accuracy +3.9 points (95% range +3.3 to +4.6), log loss -0.0144 (95% range -0.0165 to -0.0125).
+
+## Against the betting market
+
+Closing prices are available for 22,409 of the tested games (81.1%). On those games:
+
+| Forecaster | Correct | Log loss | Calibration error |
+|---|---:|---:|---:|
+| Betting market (closing price, bookmaker's cut removed) | 58.2% | 0.6714 | 0.17% |
+| Model | 57.6% | 0.6750 | 0.48% |
+
+Model log loss minus market log loss: +0.0036 (95% range +0.0025 to +0.0047). A value above zero means the market is the better forecaster.
+
+## Season by season
+
+| Season | Games | Always home | Model | Market | Model log loss | Market log loss |
+|---|---:|---:|---:|---:|---:|---:|
+| 2015 | 2,429 | 54.1% | 54.7% | no odds | 0.6838 |  |
+| 2016 | 2,427 | 53.0% | 56.9% | no odds | 0.6805 |  |
+| 2017 | 2,430 | 54.0% | 56.8% | 57.4% | 0.6784 | 0.6731 |
+| 2018 | 2,429 | 52.8% | 58.0% | 58.5% | 0.6734 | 0.6668 |
+| 2019 | 2,429 | 52.9% | 60.0% | 60.6% | 0.6656 | 0.6629 |
+| 2020 | 898 | 55.7% | 57.8% | 60.3% | 0.6768 | 0.6715 |
+| 2021 | 2,429 | 53.9% | 58.0% | 58.9% | 0.6741 | 0.6702 |
+| 2022 | 2,430 | 53.3% | 59.9% | 60.5% | 0.6685 | 0.6646 |
+| 2023 | 2,430 | 52.1% | 56.9% | 57.5% | 0.6780 | 0.6759 |
+| 2024 | 2,429 | 52.2% | 56.9% | 57.4% | 0.6784 | 0.6741 |
+| 2025 | 2,430 | 54.3% | 55.5% | 55.5% | 0.6793 | 0.6760 |
+| 2026 | 2,429 | 52.9% | 55.7% | 57.1% | 0.6818 | 0.6791 |
+
+## Paper betting at closing prices
+
+Seasons 2020 to 2026, 15,384 games with odds. No real money was involved. This is the hardest test, because the closing price already contains everything the market learned that day. "Return per unit" is the profit per 1 unit staked if every bet were the same size, with a 95% range from resampling the bets. "Bankroll" starts at 1,000 units and uses each strategy's own stake sizes.
+
+| Strategy | Bets | Won | Avg price | Return per unit | 95% range | Final bankroll | Worst drop |
+|---|---:|---:|---:|---:|---|---:|---:|
+| GRPO agent | 0 | | | no bets | | 1,000 | |
+| Edge rule (3%+, quarter Kelly) | 6,264 | 43.1% | 2.32 | -4.2% | -7.1% to -1.3% | 9 | 99.2% |
+| Always the home team | 15,384 | 53.3% | 1.87 | -3.5% | -5.0% to -2.0% | 2 | 99.8% |
+| Always the favourite | 15,384 | 58.1% | 1.67 | -3.9% | -5.2% to -2.6% | 1 | 99.9% |
+| Always the underdog | 15,384 | 41.9% | 2.35 | -3.7% | -5.5% to -1.9% | 1 | 99.9% |
+
+### The agent, season by season
+
+"Kept never-bet" means that after training, no version of the agent was proven better than not betting on the held-back season, so it passed on every game.
+
+| Season | Trained on | Checked on | Result of training | Bets | Return per unit | Edge rule return per unit |
+|---|---|---|---|---:|---:|---:|
+| 2020 | 2017 to 2018 | 2019 | kept never-bet | 0 | no bets | -3.4% |
+| 2021 | 2017 to 2019 | 2020 | kept never-bet | 0 | no bets | -1.0% |
+| 2022 | 2017 to 2020 | 2021 | kept never-bet | 0 | no bets | -7.1% |
+| 2023 | 2017 to 2021 | 2022 | kept never-bet | 0 | no bets | -0.8% |
+| 2024 | 2017 to 2022 | 2023 | kept never-bet | 0 | no bets | -5.6% |
+| 2025 | 2017 to 2023 | 2024 | kept never-bet | 0 | no bets | -6.7% |
+| 2026 | 2017 to 2024 | 2025 | kept never-bet | 0 | no bets | -5.0% |
+
+What the learning looked like: averaged over these seasons, the agent started out betting on 72% of its training games and ended up betting on 5%. On the held-back season, what it still wanted to bet on did not make money.
+
+## Betting early, at opening prices
+
+Opening prices are available for 7,240 tested games (seasons 2024 to 2026).
+
+- **The price moves toward the model.** For each point the model sat away from the opening price, the price moved 0.39 of a point in the model's direction by game time. The link between the two is 0.50 on a scale where 0 means none (anything inside plus or minus 0.02 would be noise).
+- **Opening prices are softer than closing prices.** Log loss: opening price 0.6790, closing price 0.6765, model 0.6800. The price moved 2.4 points on average between open and close.
+
+One caution. The model is given the pitcher who actually started. When an opening price was set before a late change of starter, the model knew something that nobody could have known at the time. That flatters these numbers by an unknown amount. The prediction log, which records the price at the moment a prediction is made, is the fair way to measure this from now on.
+
+Paper bets at the opening price, 2,429 games (season 2026). "Value against close" compares the price taken with the fair closing price. Above zero means the bets beat the closing line, which is the usual early sign of a real edge.
+
+| Strategy | Bets | Won | Avg price | Return per unit | 95% range | Value against close |
+|---|---:|---:|---:|---:|---|---:|
+| GRPO agent | 0 | | | no bets | | |
+| Edge rule (3%+, quarter Kelly) | 775 | 45.7% | 2.20 | -1.9% | -9.4% to 5.6% | -1.99% |
+| Always the home team | 2,429 | 52.9% | 1.86 | -4.0% | -7.6% to -0.1% | -3.67% |
+| Always the favourite | 2,429 | 56.0% | 1.71 | -5.1% | -8.4% to -1.7% | -4.27% |
+| Always the underdog | 2,429 | 44.0% | 2.22 | -3.7% | -8.1% to 0.6% | -4.62% |
+
+| Season | Trained on | Checked on | Result of training | Bets | Return per unit | Edge rule return per unit |
+|---|---|---|---|---:|---:|---:|
+| 2026 | 2024 | 2025 | kept never-bet | 0 | no bets | -1.9% |
+
+## Inputs the model is allowed to see
+
+`d_win_pct`, `d_pythag`, `d_rs_pg`, `d_ra_pg`, `d_ops`, `d_iso`, `d_bat_k`, `d_bat_bb`, `d_form10`, `d_rd30`, `d_pen_ra9`, `d_pen_kbb`, `d_pen_outs3`, `d_rest`, `d_elo`, `d_sp_k`, `d_sp_bb`, `d_sp_hr`, `d_sp_ra9`, `d_sp_fip`, `d_sp_whip`, `d_sp_outs_per_start`, `d_sp_gs5`, `d_sp_exp`, `d_sp_rest`, `home_sp_known`, `away_sp_known`, `season_progress`, `is_doubleheader`, `is_night`
+
+---
+The information used here was obtained free of charge from and is copyrighted by Retrosheet. Interested parties may contact Retrosheet at www.retrosheet.org.

@@ -191,7 +191,15 @@ def test_results_page_is_written_from_the_saved_backtest(big_league, preds, tmp_
     assert "—" not in page and "nan%" not in page
     markdown = report.backtest_markdown(json.loads((tmp_path / "reports" / "backtest.json").read_text()))
     assert "## Paper betting at closing prices" in markdown and "## Betting early, at opening prices" in markdown
+    readme = tmp_path / "README.md"
+    readme.write_text(f"# Title\n\n{report.README_START}\nold numbers\n{report.README_END}\n\n## Rest\n")
+    assert report.update_readme(result, readme)
+    text = readme.read_text()
+    assert "old numbers" not in text and "## What the results say" in text and text.endswith("## Rest\n")
+    assert "nan" not in text and "\u2014" not in text
+    assert not report.update_readme(result, tmp_path / "missing.md")
     fragment = report.render_page(result, fragment=True)
-    assert fragment.startswith("<title>") and "</html>" not in fragment
+    assert "<title>MLB Predict Results</title>" in fragment
+    assert "<!doctype" not in fragment and "</html>" not in fragment and "<body" not in fragment
     with pytest.raises(FileNotFoundError):
         report.write_page(tmp_path / "elsewhere" / "index.html")

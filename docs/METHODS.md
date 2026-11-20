@@ -148,7 +148,7 @@ whole batch. Later GRPO work makes the same change for a related reason.
 **Passing is the default.** Single game results are mostly luck, so a policy
 can look good by chance. After each learning round the policy is scored on a
 held-back season. It is kept only if it beats "never bet" there by at least
-one standard error. If no round does, the agent keeps the never-bet policy.
+two standard errors. If no round does, the agent keeps the never-bet policy.
 An agent that passes on everything is a real result, not a failure to run.
 
 **It keeps learning.** `mlb learn` continues training from the current policy

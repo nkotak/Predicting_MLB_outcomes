@@ -1,4 +1,4 @@
-"""The ``mlb`` command.
+"""MLB Predict: win chances, tested against betting prices. Paper trading only.
 
 Typical first run::
 
@@ -79,6 +79,8 @@ def cmd_backtest(args) -> int:
     (REPORTS / "BACKTEST.md").write_text(report.backtest_markdown(result))
     print(report.backtest_text(result))
     print(f"\nFull results: {REPORTS / 'BACKTEST.md'} and {REPORTS / 'backtest.json'}")
+    if report.update_readme(result):
+        print("The results section of README.md was updated to match.")
     return 0
 
 
