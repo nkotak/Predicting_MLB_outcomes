@@ -52,7 +52,7 @@ Each group was taken out of the model (or put in, if it had been left out) and t
 
 | Group of inputs | In the model | Helps by (95% range) | Verdict |
 |---|---|---:|---|
-| Starter's pitches: swings and misses, speed, ground balls | yes | +0.30 (-0.00 to +0.61) | too small to tell from chance |
+| Starter's pitches: swings and misses, speed, ground balls | yes | +0.30 (+0.00 to +0.61) | too small to tell from chance |
 | The nine hitters actually starting | yes | +0.28 (-0.02 to +0.61) | too small to tell from chance |
 | Age of the hitters and the starter | yes | +0.25 (+0.12 to +0.38) | helps |
 | Statcast: contact quality, expected hitting, fielding range, speed | yes | +0.21 (+0.05 to +0.38) | helps |
@@ -63,13 +63,13 @@ Each group was taken out of the model (or put in, if it had been left out) and t
 | Team fielding | yes | +0.01 (-0.06 to +0.08) | too small to tell from chance |
 | Ballpark, weather and umpire | no, tested and left out | -0.01 (-0.12 to +0.10) | too small to tell from chance |
 | Hot and cold streaks: the last three weeks against the longer record | no, tested and left out | -0.04 (-0.10 to +0.02) | too small to tell from chance |
-| Bullpen quality and tiredness | no, tested and left out | -0.08 (-0.16 to -0.00) | hurts |
+| Bullpen quality and tiredness | no, tested and left out | -0.08 (-0.16 to +0.00) | hurts |
 
 ## Does the model know anything the market does not?
 
 A simple mix of the market's chance and the model's chance was fitted on earlier seasons and scored on the next one. If the mix scores no better than the market on its own, the model holds nothing the price does not already contain. For opening prices the model uses lineups guessed that morning.
 
-- Closing price, 22,415 games: market alone 0.6715, market mixed with the model 0.6715, change +0.0000 (95% range -0.0000 to +0.0001), so the model adds nothing to this price that can be told apart from chance. The mix gives the model 5% of the weight.
+- Closing price, 22,415 games: market alone 0.6715, market mixed with the model 0.6715, change +0.0000 (95% range +0.0000 to +0.0001), so the model adds nothing to this price that can be told apart from chance. The mix gives the model 5% of the weight.
 - Opening price, 4,858 games: market alone 0.6807, market mixed with the model 0.6795, change -0.0012 (95% range -0.0022 to -0.0001), so the model adds real information to this price. The mix gives the model 59% of the weight.
 
 ## Shopping for the best price

@@ -51,8 +51,9 @@ def season_span(seasons: list) -> str:
 
 
 def _span(block: dict, digits: int = 4, scale: float = 1.0, unit: str = "") -> str:
-    return (f"{scale * block['diff']:+.{digits}f}{unit} "
-            f"(95% range {scale * block['low']:+.{digits}f} to {scale * block['high']:+.{digits}f})")
+    def show(value: float) -> str:
+        return f"{round(scale * value, digits) + 0.0:+.{digits}f}"  # adding 0.0 turns "-0.0000" into "+0.0000"
+    return f"{show(block['diff'])}{unit} (95% range {show(block['low'])} to {show(block['high'])})"
 
 
 def _forecast_rows(overall: dict) -> list[tuple[str, dict]]:
@@ -75,7 +76,9 @@ def _verdict(block: dict) -> str:
 
 
 def _thousandths(block: dict) -> str:
-    return f"{1000 * block['diff']:+.2f} ({1000 * block['low']:+.2f} to {1000 * block['high']:+.2f})"
+    def show(value: float) -> str:
+        return f"{round(1000 * value, 2) + 0.0:+.2f}"  # adding 0.0 turns "-0.00" into "+0.00"
+    return f"{show(block['diff'])} ({show(block['low'])} to {show(block['high'])})"
 
 
 def player_detail_sentence(result: dict) -> str:
