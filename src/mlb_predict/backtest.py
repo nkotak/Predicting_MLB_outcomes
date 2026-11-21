@@ -6,7 +6,8 @@ never saw that season's results.
 
 Paper betting compares several ways of choosing bets on the same games:
 
-* the GRPO agent
+* the GRPO agent, which passes unless betting is proven better
+* the same agent with that safety bar off, to show what it learned to bet on
 * a fixed rule (bet when the edge is at least 3%, quarter-Kelly stake)
 * three do-nothing-clever baselines (always the home team, always the
   favourite, always the underdog) that show what the bookmaker's cut costs
@@ -89,6 +90,9 @@ def agent_walk_forward(priced: pd.DataFrame, config: GRPOConfig | None = None, *
         agent.fit(*_states_rewards(train, prices), *_states_rewards(val, prices))
         choice = agent.decide(test["p_model"], test[prices[0]], test[prices[1]])
         choice.index = test.index
+        # The same games with the safety bar off: what the learned policy would have bet.
+        raw = agent.decide(test["p_model"], test[prices[0]], test[prices[1]], guarded=False)
+        choice["raw_side"], choice["raw_stake"] = raw["side"].to_numpy(), raw["stake"].to_numpy()
         decisions.append(choice)
         notes[test_season] = {
             "train_seasons": [int(s) for s in earlier[:-1]], "validation_season": int(val_season),
@@ -96,6 +100,7 @@ def agent_walk_forward(priced: pd.DataFrame, config: GRPOConfig | None = None, *
             "kept_never_bet_policy": agent.info["kept_never_bet_policy"],
             "best_validation_reward": agent.info["best_validation_reward"],
             "bet_rate": float((choice["side"] != "pass").mean()),
+            "bet_rate_safety_off": float((choice["raw_side"] != "pass").mean()),
             **{k: agent.info[k] for k in ("bet_rate_first_round", "bet_rate_last_round",
                                           "train_reward_first_round", "train_reward_last_round",
                                           "validation_reward_last_round") if k in agent.info},
@@ -103,7 +108,7 @@ def agent_walk_forward(priced: pd.DataFrame, config: GRPOConfig | None = None, *
         log.info("agent %d: trained on %s, bet on %.1f%% of games", test_season, earlier[:-1],
                  100 * notes[test_season]["bet_rate"])
     if not decisions:
-        return pd.DataFrame(columns=["side", "stake", "price"]), notes
+        return pd.DataFrame(columns=["side", "stake", "price", "raw_side", "raw_stake"]), notes
     return pd.concat(decisions).sort_index(), notes
 
 
@@ -124,6 +129,8 @@ def strategy_bets(rows: pd.DataFrame, agent_choice: pd.DataFrame | None = None,
     out = {}
     if agent_choice is not None and len(agent_choice):
         out["grpo_agent"] = _bets(rows, agent_choice["side"], agent_choice["stake"], prices)
+        if "raw_side" in agent_choice.columns:
+            out["grpo_agent_safety_off"] = _bets(rows, agent_choice["raw_side"], agent_choice["raw_stake"], prices)
     rule = ThresholdRule().decide(rows["p_model"], rows[prices[0]], rows[prices[1]])
     out["edge_rule"] = _bets(rows, rule["side"], rule["stake"], prices)
     flat = np.full(len(rows), FLAT_STAKE)

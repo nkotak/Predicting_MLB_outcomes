@@ -8,6 +8,7 @@ from pathlib import Path
 
 STRATEGY_NAMES = {
     "grpo_agent": "GRPO agent",
+    "grpo_agent_safety_off": "GRPO agent, safety bar off",
     "edge_rule": "Edge rule (3%+, quarter Kelly)",
     "always_home": "Always the home team",
     "always_favourite": "Always the favourite",
@@ -147,6 +148,7 @@ def backtest_markdown(result: dict) -> str:
             "",
         ]
         out += _strategy_table(betting, with_close=False)
+        out += ["", _safety_off_sentence(betting)]
         out += ["", "### The agent, season by season", "",
                 "\"Kept never-bet\" means that after training, no version of the agent was proven better than "
                 "not betting on the held-back season, so it passed on every game.",
@@ -217,6 +219,21 @@ def _strategy_table(betting: dict, *, with_close: bool) -> list[str]:
         rows.append(f"| {name} | {run['bets']:,} | {pct(run['win_rate'])} | {run['average_price']:.2f} | "
                     f"{pct(run['roi'])} | {pct(run['roi_low'])} to {pct(run['roi_high'])} |{tail}")
     return rows
+
+
+def _safety_off_sentence(betting: dict) -> str:
+    """What the agent's learned betting would have done without its safety bar."""
+    raw = betting.get("overall", {}).get("grpo_agent_safety_off")
+    if not raw:
+        return ""
+    if raw["bets"] == 0:
+        return ("\"Safety bar off\" shows the bets the agent's learned policy would have placed if it were not "
+                "required to prove itself first. Even then it placed no bets: by the end of training it had "
+                "taught itself to pass on everything.")
+    return ("\"Safety bar off\" shows the bets the agent's learned policy would have placed if it were not "
+            f"required to prove itself first: {raw['bets']:,} paper bets, {pct(raw['win_rate'])} won, "
+            f"{pct(raw['roi'])} return per unit staked (95% range {pct(raw['roi_low'])} to {pct(raw['roi_high'])}). "
+            "The safety bar is what stopped those bets from being recommended.")
 
 
 def _learning_sentence(betting: dict) -> str:
@@ -463,7 +480,8 @@ def render_page(result: dict, predictions=None, card: dict | None = None, hero_i
         html.append(f"<p class='note'>The learning agent (GRPO) is retrained before each season on earlier seasons only. "
                     f"In {len(kept)} of {total} seasons, no betting policy was proven better than not betting on the "
                     "held-back season, so it passed on every game. Passing is a real result: it means the evidence did "
-                    f"not support betting at these prices.</p><p class='note'>{_esc(_learning_sentence(betting))}</p></section>")
+                    f"not support betting at these prices.</p><p class='note'>{_esc(_learning_sentence(betting))}</p>"
+                    f"<p class='note'>{_esc(_safety_off_sentence(betting))}</p></section>")
 
     if move.get("games"):
         html += ["<section><h2>Betting early, at opening prices</h2>",
@@ -630,6 +648,10 @@ def readme_block(result: dict) -> str:
                 out.append(f"- **The learning agent bet very rarely.** It passed entirely in {kept} of {len(notes)} "
                            f"test seasons and placed {agent['bets']:,} paper bets in total "
                            f"(return per unit {pct(agent['roi'])}, far too few bets to mean anything).")
+    raw = betting.get("overall", {}).get("grpo_agent_safety_off") if betting.get("seasons") else None
+    if raw and raw["bets"]:
+        out.append(f"- **What the agent would have bet with its safety bar off:** {raw['bets']:,} paper bets, "
+                   f"returning {pct(raw['roi'])} per unit staked. That simulation is why the bar exists.")
     if move.get("games"):
         out.append(f"- **One promising signal: early prices.** When the model disagrees with the opening price, the "
                    f"price tends to move toward the model by game time ({move['games']:,} games, "

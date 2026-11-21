@@ -24,6 +24,7 @@ In plain words:
 - **It does not beat the betting market.** The closing price is the better forecaster (log loss 0.6720 against 0.6762, and the gap is larger than chance).
 - **Paper betting at closing prices has not made money** (seasons 2018 to 2026, 20,059 games). Blind strategies lost 3.5% to 3.7% per unit staked, which is the bookmaker's cut. A fixed "bet when the model sees a 3% edge" rule returned -3.6%.
 - **The learning agent chose not to bet.** In all 9 test seasons, no betting policy it learned was proven better than not betting, so it passed on every game. That is the right call given the line above.
+- **What the agent would have bet with its safety bar off:** 2,339 paper bets, returning -4.5% per unit staked. That simulation is why the bar exists.
 - **One promising signal: early prices.** When the model disagrees with the opening price, the price tends to move toward the model by game time (7,240 games, seasons 2024 to 2026). That has not yet turned into profit after the bookmaker's cut. The prediction log is there to test it fairly from now on.
 
 Full numbers, season by season: [reports/BACKTEST.md](reports/BACKTEST.md). The same results as a page: `reports/index.html`.

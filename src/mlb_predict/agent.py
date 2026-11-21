@@ -31,6 +31,10 @@ margin. If no round manages that, the agent keeps the never-bet policy. An
 agent that passes on everything is therefore a real result. It means the
 evidence did not support betting.
 
+The policy as it stood after its last learning round is kept as well. Every
+backtest also simulates that policy with the safety bar off, so you can see
+what the agent learned to bet on and what it would have cost or earned.
+
 One deliberate difference from the original recipe
 ---------------------------------------------------
 The original GRPO divides each group's rewards by that group's own spread.
@@ -217,8 +221,16 @@ class GRPOAgent:
     def _scale(self, states: np.ndarray) -> np.ndarray:
         return (states - self.mean_) / self.scale_
 
-    def action_probs(self, states: np.ndarray) -> np.ndarray:
-        log_probs, _ = policy_log_probs(self.params, self._scale(states))
+    def action_probs(self, states: np.ndarray, *, guarded: bool = True) -> np.ndarray:
+        """Chance the policy gives each action.
+
+        ``guarded`` (the default) uses the policy that passed the safety bar,
+        which may be "never bet". With ``guarded=False`` it uses the policy as
+        it stood after its last learning round, whether or not that policy
+        was trusted. That shows what the agent learned to bet on.
+        """
+        params = self.params if guarded else getattr(self, "learned_params", None) or self.params
+        log_probs, _ = policy_log_probs(params, self._scale(states))
         return np.exp(log_probs)
 
     def greedy_actions(self, states: np.ndarray) -> np.ndarray:
@@ -306,6 +318,7 @@ class GRPOAgent:
                 stale += 1
                 if stale >= config.patience:
                     break
+        self.learned_params = {k: v.copy() for k, v in self.params.items()}  # after the last round
         self.params = best_params
         self.info = {
             "config": asdict(config), "actions": [list(a) for a in ACTIONS], "state_names": list(STATE_NAMES),
@@ -326,10 +339,15 @@ class GRPOAgent:
 
     # -- using the agent ----------------------------------------------------
 
-    def decide(self, p_model, home_dec, away_dec) -> pd.DataFrame:
-        """The agent's choice for each game: side, stake and how sure the policy is."""
+    def decide(self, p_model, home_dec, away_dec, *, guarded: bool = True) -> pd.DataFrame:
+        """The agent's choice for each game: side, stake and how sure the policy is.
+
+        ``guarded=False`` returns what the learned policy would bet with the
+        safety bar switched off. Use it to see the agent's leanings, not as a
+        recommendation.
+        """
         states = state_matrix(p_model, home_dec, away_dec)
-        probs = self.action_probs(states)
+        probs = self.action_probs(states, guarded=guarded)
         chosen = probs.argmax(axis=1)
         side = np.array([ACTIONS[a][0] for a in chosen])
         stake = np.array([ACTIONS[a][1] for a in chosen])

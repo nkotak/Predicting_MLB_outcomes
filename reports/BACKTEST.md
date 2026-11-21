@@ -53,10 +53,13 @@ Seasons 2018 to 2026, 20,059 games with odds. No real money was involved. This i
 | Strategy | Bets | Won | Avg price | Return per unit | 95% range | Final bankroll | Worst drop |
 |---|---:|---:|---:|---:|---|---:|---:|
 | GRPO agent | 0 | | | no bets | | 1,000 | |
+| GRPO agent, safety bar off | 2,339 | 52.0% | 1.95 | -4.5% | -8.3% to -0.6% | 231 | 78.4% |
 | Edge rule (3%+, quarter Kelly) | 8,778 | 42.9% | 2.35 | -3.6% | -5.9% to -1.1% | 2 | 99.8% |
 | Always the home team | 20,059 | 53.2% | 1.88 | -3.6% | -4.9% to -2.3% | 0 | 100.0% |
 | Always the favourite | 20,059 | 58.4% | 1.67 | -3.5% | -4.7% to -2.4% | 0 | 100.0% |
 | Always the underdog | 20,059 | 41.6% | 2.37 | -3.7% | -5.3% to -2.0% | 0 | 100.0% |
+
+"Safety bar off" shows the bets the agent's learned policy would have placed if it were not required to prove itself first: 2,339 paper bets, 52.0% won, -4.5% return per unit staked (95% range -8.3% to -0.6%). The safety bar is what stopped those bets from being recommended.
 
 ### The agent, season by season
 
@@ -90,6 +93,7 @@ Paper bets at the opening price, 2,429 games (season 2026). "Value against close
 | Strategy | Bets | Won | Avg price | Return per unit | 95% range | Value against close |
 |---|---:|---:|---:|---:|---|---:|
 | GRPO agent | 0 | | | no bets | | |
+| GRPO agent, safety bar off | 455 | 51.9% | 1.76 | -9.8% | -18.4% to -1.6% | -6.82% |
 | Edge rule (3%+, quarter Kelly) | 775 | 45.7% | 2.20 | -1.9% | -9.6% to 5.7% | -1.99% |
 | Always the home team | 2,429 | 52.9% | 1.86 | -4.0% | -7.5% to -0.3% | -3.67% |
 | Always the favourite | 2,429 | 56.0% | 1.71 | -5.1% | -8.5% to -1.8% | -4.27% |

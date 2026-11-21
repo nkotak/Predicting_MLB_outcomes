@@ -123,6 +123,10 @@ def test_never_bet_is_kept_when_nothing_is_proven_better():
     decisions = agent.decide(rng.uniform(0.4, 0.6, 50), np.full(50, 1.9), np.full(50, 1.9))
     assert (decisions["side"] == "pass").all() and (decisions["stake"] == 0).all()
     assert len(agent.history) > 0, "it still ran its learning rounds"
+    # With the safety bar off, the policy it actually learned is still there to inspect.
+    raw = agent.decide(rng.uniform(0.3, 0.7, 500), np.full(500, 2.1), np.full(500, 1.8), guarded=False)
+    assert set(raw["side"]) <= {"home", "away", "pass"}
+    assert not np.array_equal(agent.learned_params["w2"], agent.params["w2"])
 
 
 def test_warm_start_keeps_learning_and_saves(tmp_path):

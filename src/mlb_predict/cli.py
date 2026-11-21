@@ -102,7 +102,8 @@ def cmd_predict(args) -> int:
     date = args.date or dt.date.today()
     table = predict.predict_date(date, write_log=not args.no_log)
     print(f"\nMLB games on {date}  (paper trading only, no real bets are placed)\n")
-    header = f"{'Away':<5}{'Home':<6}{'Starters':<38}{'Home win':>9}{'Market':>8}{'Best edge':>11}  {'Agent':<16}{'Rule':<14}"
+    header = (f"{'Away':<5}{'Home':<6}{'Starters':<38}{'Home win':>9}{'Market':>8}{'Best edge':>11}  "
+              f"{'Agent':<12}{'Agent lean':<13}{'Rule':<12}")
     print(header)
     print("-" * len(header))
     for row in table.itertuples(index=False):
@@ -117,7 +118,10 @@ def cmd_predict(args) -> int:
         def show(side, stake):
             return f"{side} {100 * stake:.1f}%" if side in ("home", "away") else side
         print(f"{row.away:<5}{row.home:<6}{starters:<38}{_pct(row.p_home):>9}{market:>8}{best:>11}  "
-              f"{show(row.agent_side, row.agent_stake):<16}{show(row.rule_side, row.rule_stake):<14}")
+              f"{show(row.agent_side, row.agent_stake):<12}{show(row.agent_lean_side, row.agent_lean_stake):<13}"
+              f"{show(row.rule_side, row.rule_stake):<12}")
+    print("\nAgent: its decision, which is to pass unless betting has been proven better on past seasons.")
+    print("Agent lean: what its learned policy would bet with that safety bar off. For information only.")
     if not table["made_before_game"].all():
         print("\nNote: some of these games are already finished. Those rows are replays, not forecasts.")
     if not args.no_log:

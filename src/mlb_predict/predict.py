@@ -27,7 +27,8 @@ log = logging.getLogger(__name__)
 LOG_COLUMNS = [
     "logged_utc", "game_id", "date", "away", "home", "away_sp", "home_sp", "made_before_game",
     "p_home", "home_dec", "away_dec", "market_home_prob", "n_books",
-    "agent_side", "agent_stake", "rule_side", "rule_stake", "model_calibrated_through",
+    "agent_side", "agent_stake", "agent_lean_side", "agent_lean_stake", "rule_side", "rule_stake",
+    "model_calibrated_through",
     "graded", "home_win", "agent_profit", "rule_profit", "close_home_dec", "close_away_dec",
 ]
 MIN_SEASON_GAMES = 2000  # a season counts as complete once it has this many finished games
@@ -169,6 +170,7 @@ def predict_date(date: dt.date, *, write_log: bool = True) -> pd.DataFrame:
     out["edge_home"] = edge(out["p_home"], out["home_dec"])
     out["edge_away"] = edge(1.0 - out["p_home"], out["away_dec"])
     out["agent_side"], out["agent_stake"] = "no price", 0.0
+    out["agent_lean_side"], out["agent_lean_stake"] = "no price", 0.0
     out["rule_side"], out["rule_stake"] = "no price", 0.0
     priced = out["home_dec"].notna().to_numpy()
     if priced.any():
@@ -176,9 +178,15 @@ def predict_date(date: dt.date, *, write_log: bool = True) -> pd.DataFrame:
         rule = ThresholdRule().decide(part["p_home"], part["home_dec"], part["away_dec"])
         out.loc[priced, "rule_side"], out.loc[priced, "rule_stake"] = rule["side"].to_numpy(), rule["stake"].to_numpy()
         try:
-            choice = GRPOAgent.load(models_dir()).decide(part["p_home"], part["home_dec"], part["away_dec"])
+            agent = GRPOAgent.load(models_dir())
+            choice = agent.decide(part["p_home"], part["home_dec"], part["away_dec"])
             out.loc[priced, "agent_side"] = choice["side"].to_numpy()
             out.loc[priced, "agent_stake"] = choice["stake"].to_numpy()
+            # What the learned policy leans toward with its safety bar off. Shown
+            # for information. It is not a recommendation.
+            lean = agent.decide(part["p_home"], part["home_dec"], part["away_dec"], guarded=False)
+            out.loc[priced, "agent_lean_side"] = lean["side"].to_numpy()
+            out.loc[priced, "agent_lean_stake"] = lean["stake"].to_numpy()
         except FileNotFoundError:
             out.loc[priced, "agent_side"] = "no agent"
     calibrated = model.info.get("calibration_seasons") or [None]

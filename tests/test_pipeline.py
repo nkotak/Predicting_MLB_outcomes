@@ -79,7 +79,11 @@ def test_betting_report_compares_strategies_on_unseen_seasons(big_league, preds)
     priced = backtest.priced_predictions(preds, odds)
     report = backtest.betting_report(priced)
     assert report["seasons"] == [2020, 2021]  # three earlier priced seasons are needed to train the agent
-    assert set(report["overall"]) == {"grpo_agent", "edge_rule", "always_home", "always_favourite", "always_underdog"}
+    assert set(report["overall"]) == {"grpo_agent", "grpo_agent_safety_off", "edge_rule", "always_home",
+                                      "always_favourite", "always_underdog"}
+    for note in report["agent_training"].values():
+        if note["kept_never_bet_policy"]:  # the guarded agent passes, whatever the raw policy would do
+            assert note["bet_rate"] == 0.0 and note["bet_rate_safety_off"] >= 0.0
     assert report["agent_training"][2020]["train_seasons"] == [2017, 2018]
     assert report["agent_training"][2020]["validation_season"] == 2019
     # Blindly backing one kind of team at prices with a 4% cut loses money.
@@ -135,6 +139,7 @@ def test_command_line_flow_from_build_to_scorecard(big_league, tmp_path, monkeyp
     picks = pd.read_csv("picks.csv")
     assert len(picks) == 4 and picks["made_before_game"].all() and picks["p_home"].between(0.05, 0.95).all()
     assert set(picks["agent_side"]) <= {"home", "away", "pass"}
+    assert set(picks["agent_lean_side"]) <= {"home", "away", "pass"} and "Agent lean" in shown
 
     assert cli.main(["grade"]) == 0
     assert "Graded 0" in capsys.readouterr().out  # nothing has been played yet
