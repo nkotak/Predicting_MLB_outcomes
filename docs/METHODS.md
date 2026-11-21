@@ -15,12 +15,19 @@ flip is easy. Being more right than the price is not.
 
 ## 2. Data
 
-Three free public sources, described in `DATA_DICTIONARY.md`.
+Free public sources only, described in `DATA_DICTIONARY.md`.
 
 - **Retrosheet** for finished seasons. Its per-game files include every
   pitcher's own line, so starter statistics are real and not team totals.
-- **MLB's public feed** for the current season and upcoming games.
-- **ESPN's public feed** for sportsbook prices from 2014 onward.
+- **MLB's public feed** for the current season and upcoming games, and, for
+  every game since 2010, the detail inside the game: both starting lineups,
+  every plate appearance, a summary of every pitch, the active roster, the
+  weather and the umpire. That is one download per game, about 40,000 in all.
+- **MLB's transactions feed** for injured list moves.
+- **Baseball Savant** for three Statcast season tables: expected hitting
+  from quality of contact, fielding range and sprint speed.
+- **ESPN's public feed** for sportsbook prices from 2014 onward, including
+  the best price on offer across books.
 
 Players are matched across sources by id through the Chadwick register, never
 by name. Teams go through one code table.
@@ -32,6 +39,11 @@ by name. Teams go through one code table.
 - a team-game has more than one starting pitcher, or a team code is unknown
 - a full season has an implausible number of games or teams
 - more than 1% of starting pitchers have no MLB id
+- fewer than 99% of finished games have both nine-man starting lineups
+- the game feed and the box scores disagree about who started on the mound
+  in more than 1% of games (two independent sources, so this is a strong
+  check on the whole join)
+- plate appearances per game fall outside what baseball produces
 - a season's betting favourites win more than 61.5% of the time, which would
   mean prices recorded during games had got in
 
@@ -44,24 +56,113 @@ accidentally using each game's own box score.
   date, or game one of the same day's doubleheader).
 - Finished and upcoming games go through the same code, so there is no
   separate "live" path that could behave differently.
-- The model can only read the columns named in `FEATURES`. Adding a column
-  somewhere else cannot leak into it.
+- The model can only read the columns named in `MODEL_FEATURES`
+  (`inputs.py`). Adding a column somewhere else cannot leak into it.
 - A test rewrites one game's result and box score and checks that the inputs
-  for that game, and for every earlier game, do not change at all.
+  for that game, and for every earlier game, do not change at all. A second
+  test does the same to every plate appearance in a game.
+- League averages, ballpark effects and Statcast season tables are always
+  taken from the season before, never from the season being predicted.
 
-## 4. The model
+Two things about a game are used that are not "earlier games", because they
+are announced before first pitch: who is starting (the pitcher and the nine
+hitters) and who is on the roster. The lineup is only announced a few hours
+ahead, so the project also runs with lineups **guessed** from each team's
+recent games. Early-price betting is always tested that way.
 
-Two simple models are averaged, then calibrated.
+A guessed lineup starts from the team's most recent real lineup this season
+against a starter of the same throwing hand. Anyone in it who has left the
+active roster is replaced by whoever started most often in the last seven
+such games. The guess lands within about 0.004 of the real lineup's hitting
+number on average, a third of the typical gap between two teams' lineups.
+
+## 4. Inputs: the team view and the player view
+
+**Team view** (`features.py`). Each club as a whole: record, runs, batting
+rates, bullpen, recent form, a running rating, plus each starting pitcher
+from his own box score lines.
+
+**Player view** (`players.py`). The same game, looked at one player at a time:
+
+- **Lineup.** Each of the nine hitters starting is projected from his own
+  plate appearances: this season in full, last season at 0.6, the one before
+  at 0.35, older at 0.2. Each plate appearance is first corrected for the
+  ballpark it happened in (measured on the three seasons before), so a
+  hitter is not flattered by a hitter-friendly home park and a pitcher is
+  not punished for one. The projection is pulled toward the league average
+  with the weight of 220 plate appearances, so a hot fortnight does not look
+  like a new player. A hitter with no record is assumed slightly below
+  average. The nine are averaged by how often each lineup slot bats.
+- **Left and right.** Hitters do better against pitchers who throw with the
+  opposite hand. Each hitter's projection is adjusted for the hand of that
+  day's starter, starting from the league-wide size of the effect and moving
+  toward the hitter's own split only slowly (it takes about 1,000 plate
+  appearances to count for half). The starter gets the same treatment against
+  left- and right-handed hitters.
+- **Matchup.** A hitter's number against that hand and the pitcher's number
+  against that side are combined the standard way (hitter times pitcher,
+  divided by the league average for that pairing).
+- **History.** What each hitter has done against this exact pitcher before.
+  Thirty plate appearances is a tiny sample, so it only nudges the matchup.
+- **Starter's pitches.** Swings and misses per pitch, called strikes, ground
+  balls, fastball speed against the league, and whether his speed in his
+  last three outings is up or down on his own norm.
+- **Bullpen.** The relievers on that day's roster, each rated from his own
+  record and weighted by how much he has been used lately. A reliever who
+  pitched yesterday, or two days running, or threw a lot of pitches, counts
+  for less. The output is the quality of the bullpen that is actually
+  available, and how much of it is tired.
+- **Defense.** Share of balls in play the team's fielders turn into outs.
+- **Statcast.** How hard the lineup and the starter's opponents hit the ball,
+  and last season's expected-versus-actual gap, fielding range and speed.
+- **Injuries.** How much hitting and pitching each club has on the injured
+  list. With the real lineup and roster already known, this mostly repeats
+  what they say, and the tests confirm that.
+- **Setting.** How the ballpark has played over the three previous seasons,
+  temperature, wind blowing out or in, and the plate umpire's history.
+- **Expected runs.** All of it rolled into the runs each team should score:
+  the lineup's matchup against the starter for the share of the game he
+  usually covers, and against the available bullpen for the rest, turned
+  into runs and adjusted for the ballpark.
+
+Which of these groups stayed in the model, and what each was worth, is
+measured in `reports/BACKTEST.md`.
+
+## 5. The model
+
+Four simple parts are averaged, then calibrated.
 
 - **Logistic regression** on standardized inputs.
 - **Gradient boosted trees** (shallow, heavily regularized).
-- **Calibration**: a one-input logistic fit on a season neither model trained
-  on, so that a stated 60% happens about 60% of the time.
+- **A run margin part.** The first two only learn from who won. This one
+  learns from the score: it predicts the run margin (capped at eight runs so
+  one blowout cannot dominate) and turns that into a win chance. A 9-1 win
+  says more about two teams than a 2-1 win.
+- **A price-taught part.** One game's result is mostly luck: a team with a
+  60% chance still loses four times in ten, so "who won" is a very noisy
+  answer key. The betting market's closing price is a much steadier one.
+  This part is fitted to what the closing price said about **past** games,
+  using the same inputs as the other parts. It is used once at least 4,000
+  past games have prices, which in the season-by-season test means from
+  2017 on.
+- **Calibration**: a one-input logistic fit on a season none of the parts
+  trained on, so that a stated 60% happens about 60% of the time.
 
-Simple on purpose. The signal in baseball is small, and in testing the
-logistic regression alone is about as good as the blend.
+The three parts taught by results count for half of the average and the
+price-taught part for the other half.
 
-## 5. Scoring: walk forward by season
+**Prices are a training target here, never an input.** The model is not
+shown the price of the game it is predicting, a test checks that, and the
+part only ever learns from seasons before the one being scored. It does make
+the model think more like the market, which is the point: it is how the
+model gets closer to the best forecaster available. It also means the model
+will disagree with the market less often than before.
+
+Simple on purpose. The signal in baseball is small. More complicated
+versions were tried (deeper trees, more trees, a learned mix of the parts,
+weighting recent seasons more) and none did better on unseen seasons.
+
+## 6. Scoring: walk forward by season
 
 For a test season Y:
 
@@ -85,7 +186,7 @@ team rating on its own, and the betting market where odds exist. Differences
 come with a 95% range from resampling the games, because one season of about
 2,430 games moves accuracy by roughly two points on luck alone.
 
-## 6. The market as a forecaster
+## 7. The market as a forecaster
 
 For each game the prices from all pre-game sportsbooks are converted to a
 fair win chance (bookmaker's cut removed) and the middle value is used. A
@@ -95,7 +196,7 @@ price.
 The model is then compared with the market on the same games. This is the
 test that decides whether betting could ever pay.
 
-## 7. Paper betting
+## 8. Paper betting
 
 No real money is involved anywhere in this project.
 
@@ -114,10 +215,17 @@ Strategies compared: the GRPO agent, a fixed rule (bet when edge is at least
 (always home, always favourite, always underdog) that show the cost of the
 bookmaker's cut.
 
-Betting is tested twice: at closing prices for every season with odds, and at
-opening prices for the recent seasons that have them.
+Betting is tested three ways: at the middle closing price for every season
+with odds, at the best closing price any sportsbook offered, and at opening
+prices for the recent seasons that have them. Early bets use lineups guessed
+from recent games.
 
-## 8. The GRPO agent
+The report also fits a simple mix of the market's chance and the model's
+chance on earlier seasons and scores it on the next one. If the mix is no
+better than the market alone, the model holds nothing the price does not
+already contain.
+
+## 9. The GRPO agent
 
 The agent decides, for each game, whether to pass or to back one side with a
 small, medium or large paper stake (0.5%, 1% or 2% of bankroll). It sees the
@@ -160,15 +268,20 @@ knows the truth, the market is noisy) and check the agent finds it and bets
 the right side. A second test makes the market right and the model noisy and
 checks the agent learns to stop betting.
 
-## 9. Known limits
+## 10. Known limits
 
 - **Starters and opening prices.** The data holds the pitcher who actually
   started. An opening price set before a late change could not have known
   that. Early-price results are flattered by an unknown amount. The
   prediction log, which stores the price at the moment of each prediction, is
   the fair measure going forward.
-- **No line-ups, injuries or weather.** The market has them. The model does
-  not.
+- **Lineups are only known late.** With the real lineup the model is at its
+  best, but that leaves only a few hours to bet. Morning forecasts use a
+  guessed lineup and are a little worse.
+- **No pitch-by-pitch tracking.** Pitch movement and location, catcher
+  framing and minor league records are not used. Professional models have
+  them.
+- **Weather** is the reading published with the game, not a forecast.
 - **Odds source.** ESPN's feed is unofficial and its coverage and sportsbooks
   change by season. Opening prices exist for recent seasons only.
 - **Rule changes.** The 2023 pitch clock and shift limits changed the game.

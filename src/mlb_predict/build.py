@@ -8,6 +8,10 @@ Tables written to ``data/processed``:
     players        id and name for every pitcher
     odds           closing (or current) moneyline per game, where available
 
+plus the player-level tables described in ``playerdata``: lineups, rosters,
+plate appearances, game extras, people, injured list stretches and Statcast
+season tables.
+
 Every check that fails stops the build with a message that says what is wrong.
 """
 
@@ -20,13 +24,16 @@ import logging
 import numpy as np
 import pandas as pd
 
-from . import teams
+from . import playerdata, teams
 from .config import FIRST_SEASON, ensure, processed_dir
 from .sources import crosswalk, espn, mlbapi, retrosheet
 
 log = logging.getLogger(__name__)
 
 TABLES = ("games", "team_games", "pitcher_games", "players", "odds")
+#: Player-level tables from MLB's game feed. See ``playerdata``.
+PLAYER_TABLES = playerdata.TABLES
+ALL_TABLES = TABLES + PLAYER_TABLES
 # Favourites at pre-game prices win about 57 to 59 percent of MLB games. A
 # season well above that, on a large sample, means in-game prices got in.
 MIN_GAMES_FOR_MARKET_CHECK = 1500
@@ -56,6 +63,11 @@ def load(names: tuple[str, ...] = TABLES) -> dict[str, pd.DataFrame]:
             f"missing tables {missing} in {out}. Run `mlb fetch` and then `mlb build` first."
         )
     return {name: pd.read_parquet(out / f"{name}.parquet") for name in names}
+
+
+def load_all() -> dict[str, pd.DataFrame]:
+    """Every table, the player-level ones included."""
+    return load(ALL_TABLES)
 
 
 # --------------------------------------------------------------------------
@@ -167,7 +179,9 @@ def match_odds(games: pd.DataFrame, events: pd.DataFrame) -> pd.DataFrame:
     against the day before and after, which covers suspended and moved games.
     """
     columns = ["game_id", "event_id", "home_dec", "away_dec", "market_home_prob", "n_books",
-               "open_home_dec", "open_away_dec", "open_market_home_prob", "odds_fetched_utc"]
+               "best_home_dec", "best_away_dec",
+               "open_home_dec", "open_away_dec", "open_market_home_prob",
+               "open_best_home_dec", "open_best_away_dec", "odds_fetched_utc"]
     if events.empty:
         return pd.DataFrame(columns=columns)
     events = events.copy()
@@ -303,6 +317,11 @@ def run(first_season: int = FIRST_SEASON) -> dict:
     tables = combine(first_season)
     tables["odds"] = build_odds(tables["games"])
     report = check(tables)
+    tables.update(playerdata.build(tables["games"]))
+    player_report, problems = playerdata.check(tables["games"], tables)
+    if problems:
+        raise DataCheckError("data checks failed:\n  - " + "\n  - ".join(problems))
+    report.update(player_report)
     save(tables)
     (ensure(processed_dir()) / "build_report.json").write_text(json.dumps(report, indent=2))
     log.info("build complete: %d finished games, %d scheduled", report["finished_games"], report["scheduled_games"])

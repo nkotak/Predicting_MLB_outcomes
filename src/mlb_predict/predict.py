@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from . import backtest, build, evaluate, features
+from . import backtest, build, evaluate, inputs
 from .agent import GRPOAgent, GRPOConfig, reward_table, state_matrix
 from .betting import ThresholdRule, decimal_to_american, edge, fair_probabilities, settle, simulate
 from .config import models_dir, predictions_path
@@ -26,7 +26,8 @@ log = logging.getLogger(__name__)
 
 LOG_COLUMNS = [
     "logged_utc", "game_id", "date", "away", "home", "away_sp", "home_sp", "made_before_game",
-    "p_home", "home_dec", "away_dec", "market_home_prob", "n_books",
+    "p_home", "lineups_posted", "home_dec", "away_dec", "market_home_prob", "n_books",
+    "best_home_dec", "best_away_dec",
     "agent_side", "agent_stake", "agent_lean_side", "agent_lean_stake", "rule_side", "rule_stake",
     "model_calibrated_through",
     "graded", "home_win", "agent_profit", "rule_profit", "close_home_dec", "close_away_dec",
@@ -53,8 +54,8 @@ def train(*, seed: int = 7) -> dict:
     held back to calibrate it. The agent trains on out-of-sample forecasts for
     every priced season except the latest one, which decides when to stop.
     """
-    tables = build.load()
-    frame = features.build_features(tables["games"], tables["team_games"], tables["pitcher_games"])
+    tables = build.load_all()
+    frame = inputs.build_frame(tables)
     seasons = _complete_seasons(frame)
     if len(seasons) < 6:
         raise ValueError(f"need at least 6 complete seasons to train, found {len(seasons)}")
@@ -93,8 +94,8 @@ def learn(*, rounds: int = 20, window_seasons: int = 4) -> dict:
     most recent seasons of priced games. The newest quarter of those games is
     held back to decide which round to keep.
     """
-    tables = build.load()
-    frame = features.build_features(tables["games"], tables["team_games"], tables["pitcher_games"])
+    tables = build.load_all()
+    frame = inputs.build_frame(tables)
     preds = evaluate.walk_forward(frame)
     priced = backtest.usable(backtest.priced_predictions(preds, tables["odds"]), backtest.CLOSE).copy()
     # Where a prediction was logged before the game, learn from the forecast
@@ -145,7 +146,7 @@ def learn(*, rounds: int = 20, window_seasons: int = 4) -> dict:
 
 def predict_date(date: dt.date, *, write_log: bool = True) -> pd.DataFrame:
     """Win chances and paper-bet suggestions for every game on ``date``."""
-    tables = build.load()
+    tables = build.load_all()
     games = tables["games"]
     day = pd.Timestamp(date)
     if not (games["date"] == day).any():
@@ -153,20 +154,23 @@ def predict_date(date: dt.date, *, write_log: bool = True) -> pd.DataFrame:
             f"no games on {date} in the built data. Run `mlb update` to refresh the schedule, "
             "or check the date."
         )
-    frame = features.build_features(games, tables["team_games"], tables["pitcher_games"])
+    frame = inputs.build_frame(tables)
     rows = frame[frame["date"] == day].copy()
     model = WinModel.load(models_dir())
     rows["p_home"] = model.predict(rows)
 
     names = tables["players"].set_index("player_id")["name"]
     out = rows[["game_id", "date", "away", "home", "status", "home_sp_id", "away_sp_id", "p_home"]].copy()
+    # Both lineups announced, or at least one of them guessed from recent games.
+    out["lineups_posted"] = ((rows["home_lu_posted"] > 0) & (rows["away_lu_posted"] > 0)).to_numpy()
     out["home_sp"] = out["home_sp_id"].map(names).fillna("not announced")
     out["away_sp"] = out["away_sp_id"].map(names).fillna("not announced")
     out["made_before_game"] = out["status"].eq("scheduled")
     out["fair_home_american"] = [round(decimal_to_american(1.0 / p)) for p in out["p_home"]]
     out["fair_away_american"] = [round(decimal_to_american(1.0 / (1.0 - p))) for p in out["p_home"]]
-    out = out.merge(tables["odds"][["game_id", "home_dec", "away_dec", "market_home_prob", "n_books"]],
-                    on="game_id", how="left")
+    price_columns = [c for c in ("game_id", "home_dec", "away_dec", "market_home_prob", "n_books",
+                                 "best_home_dec", "best_away_dec") if c in tables["odds"].columns]
+    out = out.merge(tables["odds"][price_columns], on="game_id", how="left")
     out["edge_home"] = edge(out["p_home"], out["home_dec"])
     out["edge_away"] = edge(1.0 - out["p_home"], out["away_dec"])
     out["agent_side"], out["agent_stake"] = "no price", 0.0
@@ -211,6 +215,7 @@ def read_log(path: Path | None = None) -> pd.DataFrame:
         if column not in frame.columns:
             frame[column] = np.nan
     frame["graded"] = frame["graded"].fillna(False).astype(bool)
+    frame["lineups_posted"] = frame["lineups_posted"].fillna(False).astype(bool)
     frame["made_before_game"] = frame["made_before_game"].astype(bool)
     return frame[LOG_COLUMNS]
 

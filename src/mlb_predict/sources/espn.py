@@ -230,7 +230,9 @@ def _middle_price(prices: list[tuple[float, float]]) -> dict | None:
     if not keep.any():  # the books disagree too much to call anything a market price
         return None
     return {"home_dec": float(np.median(home_arr[keep])), "away_dec": float(np.median(away_arr[keep])),
-            "market_home_prob": float(np.median(fair_arr[keep])), "n_books": int(keep.sum())}
+            "market_home_prob": float(np.median(fair_arr[keep])), "n_books": int(keep.sum()),
+            # The best price any one of those books offered on each side: what shopping around gets you.
+            "best_home_dec": float(home_arr[keep].max()), "best_away_dec": float(away_arr[keep].max())}
 
 
 def consensus(books: list[dict]) -> dict | None:
@@ -260,7 +262,8 @@ def consensus(books: list[dict]) -> dict | None:
     early = _middle_price(opening)
     if early is not None:
         price.update({"open_home_dec": early["home_dec"], "open_away_dec": early["away_dec"],
-                      "open_market_home_prob": early["market_home_prob"]})
+                      "open_market_home_prob": early["market_home_prob"],
+                      "open_best_home_dec": early["best_home_dec"], "open_best_away_dec": early["best_away_dec"]})
     return price
 
 

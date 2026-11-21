@@ -2,7 +2,7 @@
 
 Typical first run::
 
-    mlb fetch        # download everything (the odds part takes an hour or more)
+    mlb fetch        # download everything (takes two to three hours the first time)
     mlb build        # make and check the clean tables
     mlb backtest     # season-by-season test, written to reports/
     mlb train        # fit the model and the agent used for new predictions
@@ -48,6 +48,9 @@ def cmd_fetch(args) -> int:
     summary = pipeline.fetch_all(odds=not args.no_odds, refresh=args.refresh)
     print(f"Game history from Retrosheet: {summary['retrosheet_seasons'][0]} to {summary['retrosheet_seasons'][-1]}")
     print(f"Seasons from MLB's feed: {summary['mlb_seasons']}")
+    print(f"Games with player detail downloaded now: {summary['game_feeds_downloaded']}")
+    if summary["game_feeds_failed"]:
+        print(f"Games that failed to download: {summary['game_feeds_failed']}. Run `mlb fetch` again to fill them in.")
     print(f"Odds requests made: {summary['odds_requests']}")
     print("Next: mlb build")
     return 0
@@ -56,7 +59,9 @@ def cmd_fetch(args) -> int:
 def cmd_update(args) -> int:
     from . import pipeline
     summary = pipeline.update()
-    print(f"New box scores: {summary['new_box_scores']}. Odds requests: {summary['odds_requests']}.")
+    print(f"New box scores: {summary['new_box_scores']}. New games with player detail: {summary['new_game_feeds']}. "
+          f"Upcoming games checked for lineups: {summary['upcoming_games_checked']}. "
+          f"Odds requests: {summary['odds_requests']}.")
     print(f"Finished games in data: {summary['build']['finished_games']}. Scheduled: {summary['build']['scheduled_games']}.")
     return 0
 
@@ -66,6 +71,9 @@ def cmd_build(args) -> int:
     report = build.run()
     print(f"Built {report['finished_games']} finished games and {report['scheduled_games']} scheduled games.")
     print(f"Starting pitchers matched by id: {_pct(report['starter_id_match_rate'], 2)}")
+    if report.get("lineup_coverage"):
+        low = min(report["lineup_coverage"].values())
+        print(f"Finished games with both starting lineups: at least {_pct(low, 1)} in every season")
     covered = {season: share for season, share in report.get("odds_coverage", {}).items() if share > 0}
     if covered:
         print("Share of games with odds, by season: " + ", ".join(f"{s} {_pct(v, 0)}" for s, v in covered.items()))
@@ -75,7 +83,7 @@ def cmd_build(args) -> int:
 
 def cmd_backtest(args) -> int:
     from . import backtest, report
-    result = backtest.run(save_to=REPORTS / "backtest.json")
+    result = backtest.run(save_to=REPORTS / "backtest.json", groups=args.groups)
     (REPORTS / "BACKTEST.md").write_text(report.backtest_markdown(result))
     print(report.backtest_text(result))
     print(f"\nFull results: {REPORTS / 'BACKTEST.md'} and {REPORTS / 'backtest.json'}")
@@ -102,7 +110,7 @@ def cmd_predict(args) -> int:
     date = args.date or dt.date.today()
     table = predict.predict_date(date, write_log=not args.no_log)
     print(f"\nMLB games on {date}  (paper trading only, no real bets are placed)\n")
-    header = (f"{'Away':<5}{'Home':<6}{'Starters':<38}{'Home win':>9}{'Market':>8}{'Best edge':>13}  "
+    header = (f"{'Away':<5}{'Home':<6}{'Starters':<38}{'Lineups':<10}{'Home win':>9}{'Market':>8}{'Best edge':>13}  "
               f"{'Agent':<12}{'Agent lean':<13}{'Rule':<12}")
     print(header)
     print("-" * len(header))
@@ -117,11 +125,15 @@ def cmd_predict(args) -> int:
 
         def show(side, stake):
             return f"{side} {100 * stake:.1f}%" if side in ("home", "away") else side
-        print(f"{row.away:<5}{row.home:<6}{starters:<38}{_pct(row.p_home):>9}{market:>8}{best:>13}  "
+        lineups = "posted" if row.lineups_posted else "guessed"
+        print(f"{row.away:<5}{row.home:<6}{starters:<38}{lineups:<10}{_pct(row.p_home):>9}{market:>8}{best:>13}  "
               f"{show(row.agent_side, row.agent_stake):<12}{show(row.agent_lean_side, row.agent_lean_stake):<13}"
               f"{show(row.rule_side, row.rule_stake):<12}")
     print("\nAgent: its decision, which is to pass unless betting has been proven better on past seasons.")
     print("Agent lean: what its learned policy would bet with that safety bar off. For information only.")
+    if not table["lineups_posted"].all():
+        print("Lineups marked \"guessed\" are taken from the team's recent games. Run `mlb update` and predict "
+              "again closer to game time, once lineups are posted.")
     if not table["made_before_game"].all():
         print("\nNote: some of these games are already finished. Those rows are replays, not forecasts.")
     if not args.no_log:
@@ -200,7 +212,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("update", help="daily refresh of results, starters and prices").set_defaults(func=cmd_update)
     sub.add_parser("build", help="make and check the clean tables").set_defaults(func=cmd_build)
-    sub.add_parser("backtest", help="season-by-season test of model, market and betting").set_defaults(func=cmd_backtest)
+    p = sub.add_parser("backtest", help="season-by-season test of model, market and betting")
+    p.add_argument("--groups", action="store_true",
+                   help="also measure what each group of player-level inputs is worth (slow)")
+    p.set_defaults(func=cmd_backtest)
     sub.add_parser("train", help="fit the model and agent used for new predictions").set_defaults(func=cmd_train)
 
     p = sub.add_parser("predict", help="win chances and paper bets for one date")

@@ -87,13 +87,20 @@ def _elo_only(train: pd.DataFrame, test: pd.DataFrame) -> np.ndarray:
     return fit.predict_proba(test[["d_elo"]].to_numpy())[:, 1]
 
 
-def walk_forward(frame: pd.DataFrame, *, seed: int = 7, log=None) -> pd.DataFrame:
+def walk_forward(frame: pd.DataFrame, *, seed: int = 7, log=None,
+                 features: tuple[str, ...] | None = None,
+                 test_frame: pd.DataFrame | None = None) -> pd.DataFrame:
     """Out-of-sample forecasts for every season that can be tested.
 
     Returns one row per finished, non-tied game in a test season with the
     forecast of each model part, the final model and the yardsticks.
+
+    ``test_frame`` supplies the rows to forecast when they should differ from
+    the rows trained on: the same games described with less information, for
+    example with lineups guessed that morning.
     """
     played = frame[frame["home_win"].notna()]
+    scored = played if test_frame is None else test_frame[test_frame["home_win"].notna()]
     seasons = sorted(int(s) for s in played["season"].unique())
     first_train = seasons[0] + 1
     out = []
@@ -103,14 +110,16 @@ def walk_forward(frame: pd.DataFrame, *, seed: int = 7, log=None) -> pd.DataFram
             continue
         train = played[played["season"].isin(train_seasons)]
         calib = played[played["season"] == test_season - 1]
-        test = played[played["season"] == test_season]
-        model = WinModel(seed=seed).fit(train, calib)
+        test = scored[scored["season"] == test_season]
+        model = (WinModel(seed=seed) if features is None else WinModel(seed=seed, features=tuple(features))).fit(train, calib)
         parts = model.components(test)
         fit_rows = pd.concat([train, calib])
         result = test[["game_id", "date", "season", "home", "away", "home_win"]].copy()
         result["p_model"] = model.predict(test)
         result["p_linear"] = parts["linear"]
         result["p_trees"] = parts["trees"]
+        result["p_margin"] = parts["margin"]
+        result["p_prices"] = parts.get("prices", np.nan)
         result["p_elo"] = _elo_only(fit_rows, test)
         result["p_base_rate"] = float(fit_rows["home_win"].mean())
         out.append(result)
@@ -132,6 +141,10 @@ def summarize(preds: pd.DataFrame, odds: pd.DataFrame | None = None) -> dict:
         preds["market_home_prob"] = np.nan
     columns = {"model": "p_model", "linear_only": "p_linear", "trees_only": "p_trees",
                "team_rating_only": "p_elo", "always_home": "p_base_rate"}
+    if "p_margin" in preds.columns:
+        columns["margin_only"] = "p_margin"
+    if "p_team_only" in preds.columns:  # the model without any player-level detail
+        columns["team_only"] = "p_team_only"
 
     def block(rows: pd.DataFrame) -> dict:
         y = rows["home_win"].to_numpy(dtype=float)
@@ -146,6 +159,14 @@ def summarize(preds: pd.DataFrame, odds: pd.DataFrame | None = None) -> dict:
 
     by_season = {int(s): block(rows) for s, rows in preds.groupby("season")}
     overall = block(preds)
+    if "p_prices" in preds.columns and preds["p_prices"].notna().any():
+        # The price-taught part only exists once enough past games have prices, so it is
+        # scored on the seasons that have it, next to the whole model on those same seasons.
+        taught = preds[preds["p_prices"].notna()]
+        y_taught = taught["home_win"].to_numpy(dtype=float)
+        overall["price_taught_only"] = score(y_taught, taught["p_prices"].to_numpy())
+        overall["model_on_price_taught_seasons"] = score(y_taught, taught["p_model"].to_numpy())
+        overall["price_taught_seasons"] = sorted(int(s) for s in taught["season"].unique())
     priced = preds[preds["market_home_prob"].notna()]
     if len(priced):
         y = priced["home_win"].to_numpy(dtype=float)

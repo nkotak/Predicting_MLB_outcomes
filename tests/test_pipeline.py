@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from mlb_predict import backtest, build, cli, evaluate, features, predict
+from mlb_predict import backtest, build, cli, evaluate, inputs, players, predict
 from mlb_predict.model import WinModel
 
 from .conftest import make_odds
@@ -14,7 +14,7 @@ from .conftest import make_odds
 
 @pytest.fixture(scope="module")
 def frame(big_league):
-    return features.build_features(big_league["games"], big_league["team_games"], big_league["pitcher_games"])
+    return inputs.build_frame(big_league)
 
 
 @pytest.fixture(scope="module")
@@ -51,6 +51,69 @@ def test_walk_forward_never_trains_on_the_season_it_scores(frame, preds):
     pd.testing.assert_series_equal(first.sort_index(), again.sort_index(), check_names=False)
 
 
+def test_model_has_three_parts_and_one_learns_from_the_run_margin(frame, preds):
+    assert {"p_linear", "p_trees", "p_margin"} <= set(preds.columns)
+    played = frame[frame["home_win"].notna()]
+    train, calib = played[played["season"].isin([2013, 2014, 2015])], played[played["season"] == 2016]
+    model = WinModel().fit(train, calib)
+    parts = model.components(calib)
+    assert set(parts) == {"linear", "trees", "margin"}
+    assert all(((0 < p) & (p < 1)).all() for p in parts.values())
+    # The margin part is taught the score. Change the scores without changing any winner and only it moves.
+    wider = train.copy()
+    home_won = wider["home_score"] > wider["away_score"]
+    wider.loc[home_won, "home_score"] += 3
+    wider.loc[~home_won, "away_score"] += 3
+    again = WinModel().fit(wider, calib).components(calib)
+    assert np.allclose(again["linear"], parts["linear"]) and np.allclose(again["trees"], parts["trees"])
+    assert not np.allclose(again["margin"], parts["margin"])
+    # The three parts mostly agree about which games are lopsided.
+    assert np.corrcoef(parts["margin"], parts["linear"])[0, 1] > 0.8
+
+
+def test_price_taught_part_learns_from_past_prices_and_never_sees_its_own(big_league, monkeypatch):
+    from mlb_predict import model as model_module
+    from mlb_predict.model import logit
+    tables = dict(big_league)
+    tables["odds"] = make_odds(big_league)
+    priced_frame = inputs.build_frame(tables)
+    assert inputs.TEACHER not in inputs.MODEL_FEATURES
+    assert priced_frame.loc[priced_frame["status"] == "scheduled", inputs.TEACHER].isna().all()  # unplayed: no target
+    played = priced_frame[priced_frame["home_win"].notna()]
+    train, calib = played[played["season"].isin([2013, 2014, 2015])], played[played["season"] == 2016]
+    test = played[played["season"] == 2017]
+    # Too few priced games: the part is left out and the model is the three result-taught parts.
+    without = WinModel().fit(train, calib)
+    assert "prices" not in without.components(test) and without.info["price_taught_games"] == 0
+    monkeypatch.setattr(model_module, "MIN_TEACHER_GAMES", 1000)
+    taught = WinModel().fit(train, calib)
+    parts = taught.components(test)
+    assert "prices" in parts and taught.info["price_taught_games"] == int(train[inputs.TEACHER].notna().sum())
+    assert not np.allclose(taught.predict(test), without.predict(test))
+    # It follows the market it learned from.
+    assert np.corrcoef(logit(parts["prices"]), logit(test[inputs.TEACHER]))[0, 1] > 0.6
+    # A game's own price is never read: change every test game's price and no forecast moves.
+    moved = test.assign(**{inputs.TEACHER: 0.9})
+    assert np.allclose(taught.predict(moved), taught.predict(test))
+    # In the season-by-season test the part is scored only on the seasons that have it.
+    wf = evaluate.walk_forward(priced_frame)
+    summary = evaluate.summarize(wf, tables["odds"])["overall"]
+    assert wf["p_prices"].notna().any() and summary["price_taught_seasons"] == sorted(
+        int(s) for s in wf.loc[wf["p_prices"].notna(), "season"].unique())
+    assert summary["price_taught_only"]["games"] == summary["model_on_price_taught_seasons"]["games"]
+
+
+def test_forecasts_can_be_made_on_rows_with_less_information(big_league, frame, preds):
+    """Train on real lineups, forecast with lineups guessed that morning: the daily-use case."""
+    guessed = inputs.build_frame(big_league, lineup_mode="projected")
+    morning = evaluate.walk_forward(frame, test_frame=guessed)
+    assert list(morning["game_id"]) == list(preds["game_id"])
+    assert not np.allclose(morning["p_model"], preds["p_model"])
+    assert (morning["p_model"] - preds["p_model"]).abs().mean() < 0.03  # close, because a guess is mostly right
+    same = evaluate.walk_forward(frame, test_frame=frame)
+    assert np.allclose(same["p_model"], preds["p_model"])
+
+
 def test_model_beats_the_simple_yardsticks_when_there_is_something_to_learn(preds):
     summary = evaluate.summarize(preds)["overall"]
     assert summary["model"]["log_loss"] < summary["always_home"]["log_loss"] - 0.01
@@ -67,7 +130,7 @@ def test_model_refuses_too_little_data_and_mismatched_inputs(frame, tmp_path):
     model.save(tmp_path)
     assert WinModel.load(tmp_path).predict(played.tail(5)) == pytest.approx(model.predict(played.tail(5)))
     info = json.loads((tmp_path / "win_model.json").read_text())
-    assert info["features"] == list(features.FEATURES) and info["scikit_learn"]
+    assert info["features"] == list(inputs.MODEL_FEATURES) and info["scikit_learn"]
     model.features = ("something_else",)
     model.save(tmp_path, "stale")
     with pytest.raises(RuntimeError):
@@ -103,6 +166,42 @@ def test_early_price_report_and_line_movement(big_league, preds):
     assert backtest.line_movement(priced.drop(columns=["open_home_dec"]))["games"] == 0
 
 
+def test_best_price_never_pays_less_than_the_middle_price(big_league, preds):
+    priced = backtest.priced_predictions(preds, make_odds(big_league))
+    middle = backtest.betting_report(priced)
+    best = backtest.betting_report(priced, prices=backtest.BEST)
+    assert best["games"] == middle["games"]
+    assert best["overall"]["always_home"]["roi"] > middle["overall"]["always_home"]["roi"]
+    # A price better than the middle of the market beats the fair closing price by less of the cut.
+    assert best["overall"]["always_home"]["value_against_close"] > middle["overall"]["always_home"]["value_against_close"]
+
+
+def test_market_mix_reports_how_much_the_model_adds(big_league, preds):
+    priced = backtest.priced_predictions(preds, make_odds(big_league))
+    mix = backtest.market_blend(priced)
+    assert mix["seasons"] == [2019, 2020, 2021] and mix["games"] == int(priced["season"].isin([2019, 2020, 2021]).sum())
+    assert mix["log_loss_mix"] <= mix["log_loss_model"] + 0.002
+    assert 0.0 <= mix["model_share"] <= 1.0 or mix["weight_on_model"] < 0
+    assert mix["mix_minus_market"]["low"] <= mix["mix_minus_market"]["diff"] <= mix["mix_minus_market"]["high"]
+    # A model that is the truth plus nothing else gets all the weight.
+    perfect = priced.assign(p_model=np.clip(priced["home_win"] * 0.6 + 0.2, 0.2, 0.8))
+    assert backtest.market_blend(perfect)["model_share"] > 0.8
+    assert backtest.market_blend(priced.drop(columns=["market_home_prob"]))["games"] == 0
+
+
+def test_player_detail_is_compared_with_the_team_only_model(frame, preds, monkeypatch):
+    team_only = evaluate.walk_forward(frame, features=inputs.TEAM_FEATURES)
+    gap = backtest.log_loss_gap(preds, team_only)
+    assert gap["games"] == len(preds) and gap["low"] <= gap["diff"] <= gap["high"]
+    assert backtest.log_loss_gap(preds, preds)["diff"] == 0.0
+    # Group tests: one group in the model is taken out, one that is not in the model is put in.
+    some = inputs.PLAYER_INPUTS[:3]
+    monkeypatch.setattr(players, "GROUPS", {"first_three": tuple(some), "made_up": ("d_elo_copy",)})
+    tested = backtest.group_tests(frame.assign(d_elo_copy=frame["d_elo"]), preds)
+    assert tested["first_three"]["in_model"] and tested["first_three"]["columns"] == list(some)
+    assert not tested["made_up"]["in_model"] and tested["made_up"]["helps_by"]["games"] == len(preds)
+
+
 def test_value_against_close_by_hand():
     bets = pd.DataFrame({
         "side": ["home", "away", "pass"], "home_dec": [2.2, 1.8, 2.0], "away_dec": [1.7, 2.1, 1.9],
@@ -124,6 +223,11 @@ def test_command_line_flow_from_build_to_scorecard(big_league, tmp_path, monkeyp
     assert cli.main(["backtest"]) == 0
     result = json.loads((tmp_path / "reports" / "backtest.json").read_text())
     assert result["test_seasons"] == [2017, 2018, 2019, 2020, 2021]
+    assert result["inputs"] == list(inputs.MODEL_FEATURES) and "input_groups" not in result
+    assert result["best_price"]["seasons"] == result["betting"]["seasons"] == result["best_price_middle"]["seasons"]
+    assert result["market_blend"]["closing"]["games"] > 0
+    assert "team_only" in result["forecast"]["overall"] and "model_with_guessed_lineups" in result["forecast"]["overall"]
+    assert result["player_detail"]["model_minus_team_only_log_loss"]["games"] == result["games_tested"]
     assert "Paper betting" in (tmp_path / "reports" / "BACKTEST.md").read_text()
 
     assert cli.main(["train"]) == 0
@@ -136,8 +240,10 @@ def test_command_line_flow_from_build_to_scorecard(big_league, tmp_path, monkeyp
     assert cli.main(["predict", "--date", day, "--csv", "picks.csv"]) == 0
     shown = capsys.readouterr().out
     assert "paper trading only" in shown and "not announced" in shown
+    assert "posted" in shown and "guessed" in shown and "once lineups are posted" in shown
     picks = pd.read_csv("picks.csv")
     assert len(picks) == 4 and picks["made_before_game"].all() and picks["p_home"].between(0.05, 0.95).all()
+    assert picks["lineups_posted"].sum() == 3 and (picks["best_home_dec"] >= picks["home_dec"]).all()
     assert set(picks["agent_side"]) <= {"home", "away", "pass"}
     assert set(picks["agent_lean_side"]) <= {"home", "away", "pass"} and "Agent lean" in shown
 
@@ -184,7 +290,7 @@ def test_results_page_is_written_from_the_saved_backtest(big_league, preds, tmp_
     early = backtest.betting_report(priced, prices=backtest.OPEN, min_train_seasons=1)
     early["line_movement"] = backtest.line_movement(priced)
     result = {"test_seasons": sorted(int(s) for s in preds["season"].unique()), "games_tested": len(preds),
-              "inputs": list(features.FEATURES), "forecast": evaluate.summarize(preds, odds),
+              "inputs": list(inputs.MODEL_FEATURES), "forecast": evaluate.summarize(preds, odds),
               "betting": backtest.betting_report(priced), "early_prices": early}
     (tmp_path / "reports").mkdir()
     (tmp_path / "reports" / "backtest.json").write_text(json.dumps(result, default=float))

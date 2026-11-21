@@ -14,17 +14,35 @@ STRATEGY_NAMES = {
     "always_favourite": "Always the favourite",
     "always_underdog": "Always the underdog",
 }
+GROUP_NAMES = {
+    "lineup": "The nine hitters actually starting",
+    "left_right": "Left/right matchups, hitters against the starter",
+    "history": "Each hitter's past record against this starter",
+    "starter_stuff": "Starter's pitches: swings and misses, speed, ground balls",
+    "bullpen": "Bullpen quality and tiredness",
+    "defense": "Team fielding",
+    "statcast": "Statcast: contact quality, expected hitting, fielding range, speed",
+    "injuries": "Players on the injured list",
+    "recent_form": "Hot and cold streaks: the last three weeks against the longer record",
+    "age": "Age of the hitters and the starter",
+    "setting": "Ballpark, weather and umpire",
+    "expected_runs": "Expected runs, everything rolled together",
+}
 FORECAST_NAMES = {
     "model": "Model",
     "linear_only": "Logistic regression part only",
     "trees_only": "Boosted trees part only",
+    "margin_only": "Run margin part only",
     "team_rating_only": "Team rating (Elo) only",
     "always_home": "Always pick the home team",
 }
 
 
 def pct(value, digits: int = 1) -> str:
-    return "n/a" if value is None or value != value else f"{100 * value:.{digits}f}%"
+    if value is None or value != value:
+        return "n/a"
+    text = f"{100 * value:.{digits}f}%"
+    return text[1:] if text.startswith("-") and float(text[:-1]) == 0 else text  # never "-0.0%"
 
 
 def season_span(seasons: list) -> str:
@@ -37,6 +55,157 @@ def _span(block: dict, digits: int = 4, scale: float = 1.0, unit: str = "") -> s
             f"(95% range {scale * block['low']:+.{digits}f} to {scale * block['high']:+.{digits}f})")
 
 
+def _forecast_rows(overall: dict) -> list[tuple[str, dict]]:
+    """Every forecaster to list, in order, with the name to show for it."""
+    rows = [(name, overall[key]) for key, name in FORECAST_NAMES.items() if key in overall]
+    if "price_taught_only" in overall:
+        since = overall["price_taught_seasons"][0]
+        rows.append((f"Price-taught part only ({since} on)", overall["price_taught_only"]))
+        rows.append((f"Whole model, same seasons ({since} on)", overall["model_on_price_taught_seasons"]))
+    return rows
+
+
+def _verdict(block: dict) -> str:
+    """Plain reading of a "helps by" number and its range."""
+    if block["low"] > 0:
+        return "helps"
+    if block["high"] < 0:
+        return "hurts"
+    return "too small to tell from chance"
+
+
+def _thousandths(block: dict) -> str:
+    return f"{1000 * block['diff']:+.2f} ({1000 * block['low']:+.2f} to {1000 * block['high']:+.2f})"
+
+
+def player_detail_sentence(result: dict) -> str:
+    """One sentence on what the player-level inputs did to the score."""
+    gap = result.get("player_detail", {}).get("model_minus_team_only_log_loss")
+    if not gap:
+        return ""
+    if gap["high"] < 0:
+        verdict = "The player detail made the forecasts better, by more than chance"
+    elif gap["low"] > 0:
+        verdict = "The player detail made the forecasts worse"
+    else:
+        verdict = "The player detail changed the forecasts by an amount that cannot be told apart from chance"
+    return f"{verdict}: log loss changed by {_span(gap)}. Below zero is better."
+
+
+def market_mix_sentence(block: dict, price: str) -> str:
+    """One sentence on whether the model adds anything to a market price."""
+    if not block.get("games"):
+        return ""
+    gap = block["mix_minus_market"]
+    if gap["high"] < 0:
+        verdict = "the model adds real information to this price"
+    elif gap["low"] > 0:
+        verdict = "adding the model made the price worse"
+    else:
+        verdict = "the model adds nothing to this price that can be told apart from chance"
+    share = block.get("model_share")
+    weight = "" if share is None or share != share else f" The mix gives the model {pct(max(share, 0.0), 0)} of the weight."
+    return (f"{price.capitalize()} price, {block['games']:,} games: market alone {block['log_loss_market']:.4f}, "
+            f"market mixed with the model {block['log_loss_mix']:.4f}, change {_span(gap)}, so {verdict}.{weight}")
+
+
+def best_price_sentence(result: dict) -> str:
+    """What taking the best price across sportsbooks did, on games several books quoted."""
+    middle, best = result.get("best_price_middle", {}), result.get("best_price", {})
+    if not (middle.get("seasons") and best.get("seasons")):
+        return ""
+    names = ("always_home", "always_favourite", "always_underdog")
+    cut = lambda report: -sum(report["overall"][k]["roi"] for k in names) / len(names)
+    rule_m, rule_b = middle["overall"].get("edge_rule"), best["overall"].get("edge_rule")
+    text = (f"On the {best['games']:,} games that three or more sportsbooks quoted ({season_span(best['seasons'])}), "
+            f"betting blind costs about {pct(cut(middle))} per unit staked at the middle price and about "
+            f"{pct(cut(best))} at the best price on offer.")
+    if rule_m and rule_b and rule_m["bets"] and rule_b["bets"]:
+        text += (f" The model's own picks (the 3% edge rule) returned {pct(rule_m['roi'])} at the middle price and "
+                 f"{pct(rule_b['roi'])} at the best price (95% range {pct(rule_b['roi_low'])} to {pct(rule_b['roi_high'])}).")
+    return text
+
+
+def early_sentence(result: dict) -> str:
+    """Plain reading of the early-price paper bets on the model's picks."""
+    rule = result.get("early_prices", {}).get("overall", {}).get("edge_rule")
+    if not (rule and rule.get("bets")):
+        return ""
+    text = (f"Paper bets on the model's picks at opening prices returned {pct(rule['roi'])} per unit staked "
+            f"({rule['bets']:,} bets, 95% range {pct(rule['roi_low'])} to {pct(rule['roi_high'])}).")
+    if rule["roi_low"] > 0:
+        return text + (" That range is above zero, the first sign of a real edge. It covers few seasons, so treat "
+                       "it as a lead to follow and not as proof.")
+    if rule["roi_high"] < 0:
+        return text + " That is a loss, by more than chance."
+    return text + " That range includes zero, so it could be luck either way."
+
+
+def _model_story_markdown(result: dict) -> list[str]:
+    """Sections on player detail, input groups, the market mix and price shopping."""
+    overall = result["forecast"]["overall"]
+    out: list[str] = []
+    if "team_only" in overall:
+        team, full = overall["team_only"], overall["model"]
+        out += [
+            "", "## What the player-by-player detail added", "",
+            f"The team view describes each club as a whole and each starter from his box scores "
+            f"({result.get('team_inputs', 30)} inputs). The player view adds the nine hitters actually starting, "
+            f"left/right matchups, the bullpen and more ({result.get('player_inputs', 0)} inputs).",
+            "",
+            "| Version | Correct | Log loss | Calibration error |",
+            "|---|---:|---:|---:|",
+            f"| Team view only | {pct(team['accuracy'])} | {team['log_loss']:.4f} | {pct(team['calibration_error'], 2)} |",
+            f"| Team view plus player detail (the model) | {pct(full['accuracy'])} | {full['log_loss']:.4f} | "
+            f"{pct(full['calibration_error'], 2)} |",
+        ]
+        guessed = overall.get("model_with_guessed_lineups")
+        if guessed:
+            out.append(f"| The model with lineups guessed that morning | {pct(guessed['accuracy'])} | "
+                       f"{guessed['log_loss']:.4f} | {pct(guessed['calibration_error'], 2)} |")
+        out += ["", player_detail_sentence(result)]
+    groups = result.get("input_groups")
+    if groups:
+        out += [
+            "", "### What each group of inputs is worth", "",
+            "Each group was taken out of the model (or put in, if it had been left out) and the whole "
+            "season-by-season test was run again. \"Helps by\" is how much better the log loss is with the group "
+            "than without it, in thousandths, with a 95% range. A range that includes zero means the effect "
+            "cannot be told apart from chance.",
+            "",
+            "| Group of inputs | In the model | Helps by (95% range) | Verdict |",
+            "|---|---|---:|---|",
+        ]
+        for key, block in sorted(groups.items(), key=lambda item: -item[1]["helps_by"]["diff"]):
+            out.append(f"| {GROUP_NAMES.get(key, key)} | {'yes' if block['in_model'] else 'no, tested and left out'} | "
+                       f"{_thousandths(block['helps_by'])} | {_verdict(block['helps_by'])} |")
+    mix = result.get("market_blend", {})
+    lines = [market_mix_sentence(mix.get("closing", {}), "closing"), market_mix_sentence(mix.get("opening", {}), "opening")]
+    if any(lines):
+        out += [
+            "", "## Does the model know anything the market does not?", "",
+            "A simple mix of the market's chance and the model's chance was fitted on earlier seasons and scored "
+            "on the next one. If the mix scores no better than the market on its own, the model holds nothing the "
+            "price does not already contain. For opening prices the model uses lineups guessed that morning.",
+            "",
+        ] + [f"- {line}" for line in lines if line]
+    best = result.get("best_price", {})
+    if best.get("seasons"):
+        out += [
+            "", "## Shopping for the best price", "",
+            "The betting tests use the middle price across sportsbooks. Someone with several accounts can take the "
+            f"best price on offer instead. This test uses the {best['games']:,} games "
+            f"({season_span(best['seasons'])}) that at least three sportsbooks quoted. From 2024 the free feed "
+            "carries one sportsbook only, so there is nothing to shop between in those seasons.",
+            "", "At the best closing price:", "",
+        ] + _strategy_table(best, with_close=False)
+        middle = result.get("best_price_middle", {})
+        if middle.get("seasons"):
+            out += ["", "The same games at the middle closing price:", ""] + _strategy_table(middle, with_close=False)
+        out += ["", best_price_sentence(result)]
+    return out
+
+
 def backtest_text(result: dict) -> str:
     """A short summary for the terminal."""
     overall = result["forecast"]["overall"]
@@ -44,31 +213,40 @@ def backtest_text(result: dict) -> str:
         f"Tested on {result['games_tested']:,} games, seasons {result['test_seasons'][0]} to {result['test_seasons'][-1]}.",
         "Each season was predicted by a model that had never seen it.",
         "",
-        f"{'':<32}{'Correct':>9}{'Log loss':>10}",
+        f"{'':<40}{'Correct':>9}{'Log loss':>10}",
     ]
-    for key, name in FORECAST_NAMES.items():
-        lines.append(f"{name:<32}{pct(overall[key]['accuracy']):>9}{overall[key]['log_loss']:>10.4f}")
+    for name, block in _forecast_rows(overall):
+        lines.append(f"{name:<40}{pct(block['accuracy']):>9}{block['log_loss']:>10.4f}")
     if "market" in overall:
         lines += [
             "",
             f"On the {overall['market']['games']:,} games with betting odds:",
-            f"{'Betting market (closing price)':<32}{pct(overall['market']['accuracy']):>9}{overall['market']['log_loss']:>10.4f}",
-            f"{'Model, same games':<32}{pct(overall['model_on_priced_games']['accuracy']):>9}{overall['model_on_priced_games']['log_loss']:>10.4f}",
+            f"{'Betting market (closing price)':<40}{pct(overall['market']['accuracy']):>9}{overall['market']['log_loss']:>10.4f}",
+            f"{'Model, same games':<40}{pct(overall['model_on_priced_games']['accuracy']):>9}{overall['model_on_priced_games']['log_loss']:>10.4f}",
             "Model log loss minus market log loss: " + _span(overall["model_minus_market_log_loss"])
             + ". Above zero means the market is the better forecaster.",
         ]
+    if "team_only" in overall:
+        lines += ["", f"{'Model without player detail':<40}{pct(overall['team_only']['accuracy']):>9}"
+                      f"{overall['team_only']['log_loss']:>10.4f}", player_detail_sentence(result)]
+    mix = result.get("market_blend", {})
+    for line in (market_mix_sentence(mix.get("closing", {}), "closing"), market_mix_sentence(mix.get("opening", {}), "opening")):
+        if line:
+            lines += ["", line]
     for key, title in (("betting", "Paper betting at closing prices"),
+                       ("best_price_middle", "The middle closing price, on games quoted by three or more sportsbooks"),
+                       ("best_price", "The best closing price across sportsbooks, on those same games"),
                        ("early_prices", "Paper betting at opening prices")):
         betting = result.get(key, {})
         if not betting.get("seasons"):
             continue
         lines += ["", f"{title}, {season_span(betting['seasons'])} "
                       f"({betting['games']:,} games):",
-                  f"{'':<32}{'Bets':>7}{'Won':>8}{'Return/unit':>13}{'Vs close':>10}"]
+                  f"{'':<40}{'Bets':>7}{'Won':>8}{'Return/unit':>13}{'Vs close':>10}"]
         for name_key, name in STRATEGY_NAMES.items():
             run = betting["overall"].get(name_key)
             if run:
-                lines.append(f"{name:<32}{run['bets']:>7}{pct(run['win_rate']):>8}{pct(run['roi']):>13}"
+                lines.append(f"{name:<40}{run['bets']:>7}{pct(run['win_rate']):>8}{pct(run['roi']):>13}"
                              f"{pct(run['value_against_close']):>10}")
     move = result.get("early_prices", {}).get("line_movement", {})
     if move.get("games"):
@@ -99,10 +277,15 @@ def backtest_markdown(result: dict) -> str:
         "| Forecaster | Games | Correct | Log loss | Brier | Calibration error |",
         "|---|---:|---:|---:|---:|---:|",
     ]
-    for key, name in FORECAST_NAMES.items():
-        s = overall[key]
+    for name, s in _forecast_rows(overall):
         out.append(f"| {name} | {s['games']:,} | {pct(s['accuracy'])} | {s['log_loss']:.4f} | {s['brier']:.4f} | "
                    f"{pct(s['calibration_error'], 2)} |")
+    if "price_taught_only" in overall:
+        out += ["",
+                "The price-taught part learns from what closing prices said about past games. It needs a few "
+                f"seasons of prices first, so it is in use from {overall['price_taught_seasons'][0]} on and is "
+                "scored on those seasons, next to the whole model on the same seasons. It is never shown the "
+                "price of the game it is predicting."]
     out += [
         "",
         "Model compared with always picking the home team: accuracy "
@@ -126,6 +309,7 @@ def backtest_markdown(result: dict) -> str:
             "Model log loss minus market log loss: " + _span(overall["model_minus_market_log_loss"])
             + ". A value above zero means the market is the better forecaster.",
         ]
+    out += _model_story_markdown(result)
     out += ["", "## Season by season", "",
             "| Season | Games | Always home | Model | Market | Model log loss | Market log loss |",
             "|---|---:|---:|---:|---:|---:|---:|"]
@@ -174,7 +358,10 @@ def backtest_markdown(result: dict) -> str:
             f"model {move['log_loss_model']:.4f}. The price moved {move['average_move_points']:.1f} points "
             "on average between open and close.",
             "",
-            "One caution. The model is given the pitcher who actually started. When an opening price was set "
+            "For this section the model was not shown the real lineups. It used lineups guessed from each "
+            "team's recent games, as a bettor would have to in the morning.",
+            "",
+            "One caution. The model is still given the pitcher who actually started. When an opening price was set "
             "before a late change of starter, the model knew something that nobody could have known at the time. "
             "That flatters these numbers by an unknown amount. The prediction log, which records the price at "
             "the moment a prediction is made, is the fair way to measure this from now on.",
@@ -192,6 +379,7 @@ def backtest_markdown(result: dict) -> str:
             out += ["", "| Season | Trained on | Checked on | Result of training | Bets | Return per unit | Edge rule return per unit |",
                     "|---|---|---|---|---:|---:|---:|"]
             out += _agent_rows(early)
+            out += ["", early_sentence(result)]
     out += ["", "## Inputs the model is allowed to see", "",
             ", ".join(f"`{name}`" for name in result["inputs"]), "",
             "---",
@@ -450,8 +638,7 @@ def render_page(result: dict, predictions=None, card: dict | None = None, hero_i
     html.append("</tbody></table></div></details></div>")
     html.append('<div class="card scroll"><table><thead><tr><th>Forecaster</th><th class="n">Correct</th>'
                 '<th class="n">Log loss</th><th class="n">Calibration error</th></tr></thead><tbody>')
-    for key, name in FORECAST_NAMES.items():
-        s = overall[key]
+    for name, s in _forecast_rows(overall):
         html.append(f'<tr><td>{_esc(name)}</td><td class="n">{pct(s["accuracy"])}</td><td class="n">{s["log_loss"]:.4f}</td>'
                     f'<td class="n">{pct(s["calibration_error"], 2)}</td></tr>')
     html.append("</tbody></table></div></section>")
@@ -466,6 +653,45 @@ def render_page(result: dict, predictions=None, card: dict | None = None, hero_i
                  f"scores a log loss of <b>{market['log_loss']:.4f}</b> and the model scores <b>{mp['log_loss']:.4f}</b>.</p>",
                  f'<p class="verdict">The gap is {gap["diff"]:+.4f}, with a 95% range of {gap["low"]:+.4f} to {gap["high"]:+.4f}, '
                  f"so {better}.</p></section>"]
+
+    if "team_only" in overall:
+        team = overall["team_only"]
+        guessed = overall.get("model_with_guessed_lineups")
+        html += ["<section><h2>What the player-by-player detail added</h2>",
+                 f"<p>The team view describes each club as a whole ({result.get('team_inputs', 30)} inputs). The player "
+                 f"view adds the nine hitters actually starting, left/right matchups, the bullpen and more "
+                 f"({result.get('player_inputs', 0)} inputs).</p>",
+                 '<div class="card scroll"><table><thead><tr><th>Version</th><th class="n">Correct</th>'
+                 '<th class="n">Log loss</th></tr></thead><tbody>',
+                 f'<tr><td>Team view only</td><td class="n">{pct(team["accuracy"])}</td><td class="n">{team["log_loss"]:.4f}</td></tr>',
+                 f'<tr><td>Team view plus player detail (the model)</td><td class="n">{pct(model["accuracy"])}</td>'
+                 f'<td class="n">{model["log_loss"]:.4f}</td></tr>']
+        if guessed:
+            html.append(f'<tr><td>The model with lineups guessed that morning</td><td class="n">{pct(guessed["accuracy"])}</td>'
+                        f'<td class="n">{guessed["log_loss"]:.4f}</td></tr>')
+        html.append(f"</tbody></table></div><p class='verdict'>{_esc(player_detail_sentence(result))}</p>")
+        groups = result.get("input_groups")
+        if groups:
+            html += ["<p>Each group of inputs was taken out of the model (or put in, if it had been left out) and the "
+                     "whole test was run again. \"Helps by\" is the improvement in log loss with the group, in "
+                     "thousandths. A range that includes zero cannot be told apart from chance.</p>",
+                     '<div class="card scroll"><table><thead><tr><th>Group of inputs</th><th>In the model</th>'
+                     '<th class="n">Helps by (95% range)</th><th>Verdict</th></tr></thead><tbody>']
+            for key, block in sorted(groups.items(), key=lambda item: -item[1]["helps_by"]["diff"]):
+                html.append(f'<tr><td>{_esc(GROUP_NAMES.get(key, key))}</td><td>{"yes" if block["in_model"] else "left out"}</td>'
+                            f'<td class="n">{_esc(_thousandths(block["helps_by"]))}</td><td>{_esc(_verdict(block["helps_by"]))}</td></tr>')
+            html.append("</tbody></table></div>")
+        html.append("</section>")
+
+    mix = result.get("market_blend", {})
+    mix_lines = [market_mix_sentence(mix.get("closing", {}), "closing"), market_mix_sentence(mix.get("opening", {}), "opening")]
+    if any(mix_lines):
+        html += ["<section><h2>Does the model know anything the market does not?</h2>",
+                 "<p>A simple mix of the market's chance and the model's chance was fitted on earlier seasons and "
+                 "scored on the next one. If the mix scores no better than the market alone, the model holds nothing "
+                 "the price does not already contain.</p>"]
+        html += [f"<p class='note'>{_esc(line)}</p>" for line in mix_lines if line]
+        html.append("</section>")
 
     if betting.get("seasons"):
         html += ["<section><h2>Paper betting at closing prices</h2>",
@@ -483,6 +709,17 @@ def render_page(result: dict, predictions=None, card: dict | None = None, hero_i
                     f"not support betting at these prices.</p><p class='note'>{_esc(_learning_sentence(betting))}</p>"
                     f"<p class='note'>{_esc(_safety_off_sentence(betting))}</p></section>")
 
+    best_price = result.get("best_price", {})
+    if best_price.get("seasons"):
+        html += ["<section><h2>Shopping for the best price</h2>",
+                 "<p>The table above uses the middle price across sportsbooks. Someone with several accounts can take "
+                 f"the best price on offer instead. This test uses the {best_price['games']:,} games "
+                 f"({season_span(best_price['seasons'])}) that at least three sportsbooks quoted, at the best closing price:</p>",
+                 '<div class="card scroll"><table><thead><tr><th>Strategy</th><th class="n">Bets</th><th class="n">Won</th>'
+                 '<th class="n">Return per unit</th><th class="n">Final bankroll</th></tr></thead><tbody>',
+                 _strategy_rows_html(best_price, False), "</tbody></table></div>",
+                 f"<p class='verdict'>{_esc(best_price_sentence(result))}</p></section>"]
+
     if move.get("games"):
         html += ["<section><h2>Betting early, at opening prices</h2>",
                  f"<p>Opening prices exist for {move['games']:,} tested games ({season_span(move['seasons'])}). "
@@ -496,9 +733,11 @@ def render_page(result: dict, predictions=None, card: dict | None = None, hero_i
                      '<div class="card scroll"><table><thead><tr><th>Strategy</th><th class="n">Bets</th><th class="n">Won</th>'
                      '<th class="n">Return per unit</th><th class="n">Against the close</th></tr></thead><tbody>',
                      _strategy_rows_html(early, True), "</tbody></table></div>"]
-        html.append("<p class='note'>One caution: the model is given the pitcher who actually started. An opening price "
-                    "set before a late pitching change could not have known that, which flatters these numbers by an "
-                    "unknown amount. The prediction log measures this fairly from now on.</p></section>")
+            html.append(f"<p class='verdict'>{_esc(early_sentence(result))}</p>")
+        html.append("<p class='note'>For this section the model used lineups guessed from each team's recent games, as a "
+                    "bettor would have to in the morning. One caution: it is still given the pitcher who actually "
+                    "started. An opening price set before a late pitching change could not have known that, which "
+                    "flatters these numbers by an unknown amount. The prediction log measures this fairly from now on.</p></section>")
 
     tables = predictions if isinstance(predictions, list) else ([] if predictions is None else [predictions])
     for predictions in [t for t in tables if len(t)]:
@@ -537,12 +776,14 @@ def render_page(result: dict, predictions=None, card: dict | None = None, hero_i
              "<p><b>Calibration.</b> When the model says 60%, it should happen about 60% of the time. The calibration error "
              "column shows how far off that is on average.</p>",
              "<p><b>Why the market is hard to beat.</b> Prices already reflect line-ups, injuries, weather and the money of "
-             "professional bettors, and the bookmaker takes a cut of about 4% on top.</p></section>",
+             "professional bettors, and the bookmaker takes a cut of about 4% on top. This model now sees line-ups, "
+             "injuries and weather too, so what is left is the judgement of those bettors.</p></section>",
              "</main><footer><div class='wrap'>",
              f"<p>Generated {_esc(generated or dt.date.today().isoformat())} by <code>mlb page</code>. Paper trading only.</p>",
              "<p>The information used here was obtained free of charge from and is copyrighted by Retrosheet. "
              "Interested parties may contact Retrosheet at www.retrosheet.org. Current-season results and schedules come "
-             "from MLB's public feed, and betting prices from ESPN's public feed.</p>",
+             "from MLB's public feed, Statcast season tables from Baseball Savant, and betting prices from ESPN's "
+             "public feed.</p>",
              "</div></footer>" + ("" if fragment else "</body></html>")]
     return "".join(html)
 
@@ -617,6 +858,19 @@ def readme_block(result: dict) -> str:
             f"{100 * overall['model_minus_always_home_accuracy']['diff']:.1f} points, and it cannot see a game's "
             "own result.",
         ]
+        detail = result.get("player_detail", {}).get("model_minus_team_only_log_loss")
+        if detail and "team_only" in overall:
+            team = overall["team_only"]
+            if detail["high"] < 0:
+                lead = "**Looking at individual players made it better.**"
+            elif detail["low"] > 0:
+                lead = "**Looking at individual players made it worse.**"
+            else:
+                lead = "**Looking at individual players made little difference.**"
+            out.append(f"- {lead} With the starting lineups, each starter's pitch quality, Statcast contact data, "
+                       f"injuries, age and expected runs added, log loss went from {team['log_loss']:.4f} to "
+                       f"{model['log_loss']:.4f} and accuracy from {pct(team['accuracy'])} to {pct(model['accuracy'])}. "
+                       "Lower log loss is better.")
         if gap["low"] > 0:
             out.append("- **It does not beat the betting market.** The closing price is the better forecaster "
                        f"(log loss {market['log_loss']:.4f} against {priced['log_loss']:.4f}, and the gap is "
@@ -652,11 +906,33 @@ def readme_block(result: dict) -> str:
     if raw and raw["bets"]:
         out.append(f"- **What the agent would have bet with its safety bar off:** {raw['bets']:,} paper bets, "
                    f"returning {pct(raw['roi'])} per unit staked. That simulation is why the bar exists.")
+    closing_mix = result.get("market_blend", {}).get("closing", {})
+    if closing_mix.get("games"):
+        gap_mix = closing_mix["mix_minus_market"]
+        if gap_mix["high"] < 0:
+            out.append("- **The model knows something the closing price does not.** Mixing it with the market's price "
+                       f"gave better forecasts than the price alone (log loss change {gap_mix['diff']:+.4f}).")
+        else:
+            out.append("- **The closing price already contains what the model knows.** Mixing the model with the "
+                       "market's price was no better than the price alone.")
+    shop = best_price_sentence(result)
+    if shop:
+        out.append(f"- **Shopping for the best price matters more than anything else tested.** {shop}")
     if move.get("games"):
-        out.append(f"- **One promising signal: early prices.** When the model disagrees with the opening price, the "
-                   f"price tends to move toward the model by game time ({move['games']:,} games, "
-                   f"{season_span(move['seasons'])}). That has not yet turned into profit after the bookmaker's cut. "
-                   "The prediction log is there to test it fairly from now on.")
+        line = (f"- **Early prices are where the model has something to offer.** When the model disagrees with the "
+                f"opening price, the price tends to move toward the model by game time ({move['games']:,} games, "
+                f"{season_span(move['seasons'])}).")
+        opening_mix = result.get("market_blend", {}).get("opening", {})
+        if opening_mix.get("games"):
+            if opening_mix["mix_minus_market"]["high"] < 0:
+                line += (" Mixed with the opening price, the model gives better forecasts than the opening price "
+                         "alone, by more than chance.")
+            else:
+                line += " Mixed with the opening price, the model was no better than the opening price alone."
+        tail = early_sentence(result)
+        if tail:
+            line += " " + tail
+        out.append(line + " The prediction log is there to test this fairly from now on.")
     out += ["",
             "Full numbers, season by season: [reports/BACKTEST.md](reports/BACKTEST.md). "
             "The same results as a page: `reports/index.html`."]

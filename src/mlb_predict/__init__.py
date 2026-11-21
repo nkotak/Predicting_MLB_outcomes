@@ -2,7 +2,7 @@
 
 Stages, each runnable from the ``mlb`` command:
 
-    fetch     download raw data (Retrosheet, MLB schedule and box scores, ESPN odds)
+    fetch     download raw data (Retrosheet, MLB box scores and player detail, ESPN odds)
     build     turn raw downloads into clean tables and check them
     backtest  season-by-season test of the model, the market and the betting agent
     train     fit the model and the agent that are used for new predictions
@@ -15,4 +15,4 @@ Stages, each runnable from the ``mlb`` command:
 Paper trading only. Nothing in this package places a real bet.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"

@@ -9,7 +9,7 @@ import pandas as pd
 
 from . import build
 from .config import FIRST_ODDS_SEASON, FIRST_SEASON
-from .sources import crosswalk, espn, mlbapi, retrosheet
+from .sources import crosswalk, espn, gamefeed, mlbapi, retrosheet, savant, transactions
 
 log = logging.getLogger(__name__)
 
@@ -34,12 +34,51 @@ def fetch_all(*, first_season: int = FIRST_SEASON, odds: bool = True, refresh: b
         from_mlb.append(season)
         mlbapi.fetch_boxscores(season)
     summary = {"retrosheet_seasons": published, "mlb_seasons": from_mlb, "odds_requests": 0}
+    summary.update(fetch_player_detail(range(first_season, today.year + 1)))
     if odds:
         games = build.combine(first_season)["games"]
         dates = [d.date() for d in pd.to_datetime(games.loc[games["season"] >= FIRST_ODDS_SEASON, "date"].unique())]
         past = [d for d in dates if d <= today + dt.timedelta(days=3)]
         summary["odds_requests"] = espn.fetch_odds(past, refresh_from=today - dt.timedelta(days=1))
     return summary
+
+
+def fetch_player_detail(seasons) -> dict:
+    """Lineups, plate appearances and rosters for every finished game, plus injuries and Statcast tables.
+
+    One request per game, so the first run takes a while (about five minutes a
+    season). Safe to stop and run again: games already stored are skipped.
+    """
+    downloaded = failed = 0
+    for season in seasons:
+        if not mlbapi.fetch_schedule(season):
+            continue
+        result = gamefeed.fetch(season)
+        downloaded += result["downloaded"]
+        failed += result["failed"]
+        transactions.fetch(season)
+        if season >= savant.FIRST_SEASON:
+            savant.fetch(season)
+    if failed:
+        log.warning("%d games could not be downloaded this time. Run `mlb fetch` again to fill them in.", failed)
+    return {"game_feeds_downloaded": downloaded, "game_feeds_failed": failed}
+
+
+def fetch_upcoming(days_ahead: int = 3) -> int:
+    """Rosters and, where posted, starting lineups for games in the next few days."""
+    today = dt.date.today()
+    pks = []
+    for season in {today.year, (today + dt.timedelta(days=days_ahead)).year}:
+        path = mlbapi._dir() / f"schedule_{season}.json"
+        if not path.exists():
+            continue
+        for game in mlbapi.fetch_schedule(season):
+            if game["state"] in mlbapi.FINAL_STATES or game["state"] in mlbapi.DEAD_STATES:
+                continue
+            date = dt.date.fromisoformat(game["official_date"])
+            if today - dt.timedelta(days=1) <= date <= today + dt.timedelta(days=days_ahead):
+                pks.append(int(game["game_pk"]))
+    return gamefeed.fetch_pregame(pks)
 
 
 def update(*, days_back: int = 4, days_ahead: int = 3) -> dict:
@@ -53,9 +92,12 @@ def update(*, days_back: int = 4, days_ahead: int = 3) -> dict:
     for season in seasons:
         if mlbapi.fetch_schedule(season, refresh=True):
             new_boxes += mlbapi.fetch_boxscores(season)
+    detail = fetch_player_detail([s for s in seasons if s <= today.year])
+    upcoming = fetch_upcoming(days_ahead)
     window = [today + dt.timedelta(days=offset) for offset in range(-days_back, days_ahead + 1)]
     # Every day in the window is downloaded again: upcoming games because their
     # prices keep moving, recent games so the stored price is the closing one.
     requests = espn.fetch_odds(window, refresh_from=window[0])
     report = build.run()
-    return {"new_box_scores": new_boxes, "odds_requests": requests, "build": report}
+    return {"new_box_scores": new_boxes, "odds_requests": requests, "build": report,
+            "new_game_feeds": detail["game_feeds_downloaded"], "upcoming_games_checked": upcoming}

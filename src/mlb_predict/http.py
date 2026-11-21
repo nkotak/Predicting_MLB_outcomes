@@ -28,6 +28,7 @@ _MIN_INTERVAL = {  # minimum seconds between requests to one host
     "site.api.espn.com": 0.12,
     "sports.core.api.espn.com": 0.12,
     "raw.githubusercontent.com": 0.3,
+    "baseballsavant.mlb.com": 1.0,
 }
 _last_call: dict[str, float] = {}
 _lock = threading.Lock()
