@@ -1,6 +1,6 @@
 # Backtest results
 
-Generated 2026-11-20 by `mlb backtest`. Do not edit by hand.
+Generated 2026-11-21 by `mlb backtest`. Do not edit by hand.
 
 **27,619 games**, seasons 2015 to 2026. Every season was predicted by a model that was trained and calibrated only on earlier seasons.
 
@@ -20,22 +20,22 @@ Model compared with always picking the home team: accuracy +3.9 points (95% rang
 
 ## Against the betting market
 
-Closing prices are available for 22,409 of the tested games (81.1%). On those games:
+Closing prices are available for 27,162 of the tested games (98.3%). On those games:
 
 | Forecaster | Correct | Log loss | Calibration error |
 |---|---:|---:|---:|
-| Betting market (closing price, bookmaker's cut removed) | 58.2% | 0.6714 | 0.17% |
-| Model | 57.6% | 0.6750 | 0.48% |
+| Betting market (closing price, bookmaker's cut removed) | 58.2% | 0.6720 | 0.12% |
+| Model | 57.3% | 0.6762 | 0.41% |
 
-Model log loss minus market log loss: +0.0036 (95% range +0.0025 to +0.0047). A value above zero means the market is the better forecaster.
+Model log loss minus market log loss: +0.0042 (95% range +0.0032 to +0.0052). A value above zero means the market is the better forecaster.
 
 ## Season by season
 
 | Season | Games | Always home | Model | Market | Model log loss | Market log loss |
 |---|---:|---:|---:|---:|---:|---:|
-| 2015 | 2,429 | 54.1% | 54.7% | no odds | 0.6838 |  |
-| 2016 | 2,427 | 53.0% | 56.9% | no odds | 0.6805 |  |
-| 2017 | 2,430 | 54.0% | 56.8% | 57.4% | 0.6784 | 0.6731 |
+| 2015 | 2,429 | 54.1% | 54.7% | 57.2% | 0.6838 | 0.6766 |
+| 2016 | 2,427 | 53.0% | 56.9% | 58.5% | 0.6805 | 0.6730 |
+| 2017 | 2,430 | 54.0% | 56.8% | 57.4% | 0.6784 | 0.6732 |
 | 2018 | 2,429 | 52.8% | 58.0% | 58.5% | 0.6734 | 0.6668 |
 | 2019 | 2,429 | 52.9% | 60.0% | 60.6% | 0.6656 | 0.6629 |
 | 2020 | 898 | 55.7% | 57.8% | 60.3% | 0.6768 | 0.6715 |
@@ -48,15 +48,15 @@ Model log loss minus market log loss: +0.0036 (95% range +0.0025 to +0.0047). A 
 
 ## Paper betting at closing prices
 
-Seasons 2020 to 2026, 15,384 games with odds. No real money was involved. This is the hardest test, because the closing price already contains everything the market learned that day. "Return per unit" is the profit per 1 unit staked if every bet were the same size, with a 95% range from resampling the bets. "Bankroll" starts at 1,000 units and uses each strategy's own stake sizes.
+Seasons 2018 to 2026, 20,059 games with odds. No real money was involved. This is the hardest test, because the closing price already contains everything the market learned that day. "Return per unit" is the profit per 1 unit staked if every bet were the same size, with a 95% range from resampling the bets. "Bankroll" starts at 1,000 units and uses each strategy's own stake sizes.
 
 | Strategy | Bets | Won | Avg price | Return per unit | 95% range | Final bankroll | Worst drop |
 |---|---:|---:|---:|---:|---|---:|---:|
 | GRPO agent | 0 | | | no bets | | 1,000 | |
-| Edge rule (3%+, quarter Kelly) | 6,264 | 43.1% | 2.32 | -4.2% | -7.1% to -1.3% | 9 | 99.2% |
-| Always the home team | 15,384 | 53.3% | 1.87 | -3.5% | -5.0% to -2.0% | 2 | 99.8% |
-| Always the favourite | 15,384 | 58.1% | 1.67 | -3.9% | -5.2% to -2.6% | 1 | 99.9% |
-| Always the underdog | 15,384 | 41.9% | 2.35 | -3.7% | -5.5% to -1.9% | 1 | 99.9% |
+| Edge rule (3%+, quarter Kelly) | 8,778 | 42.9% | 2.35 | -3.6% | -5.9% to -1.1% | 2 | 99.8% |
+| Always the home team | 20,059 | 53.2% | 1.88 | -3.6% | -4.9% to -2.3% | 0 | 100.0% |
+| Always the favourite | 20,059 | 58.4% | 1.67 | -3.5% | -4.7% to -2.4% | 0 | 100.0% |
+| Always the underdog | 20,059 | 41.6% | 2.37 | -3.7% | -5.3% to -2.0% | 0 | 100.0% |
 
 ### The agent, season by season
 
@@ -64,15 +64,17 @@ Seasons 2020 to 2026, 15,384 games with odds. No real money was involved. This i
 
 | Season | Trained on | Checked on | Result of training | Bets | Return per unit | Edge rule return per unit |
 |---|---|---|---|---:|---:|---:|
-| 2020 | 2017 to 2018 | 2019 | kept never-bet | 0 | no bets | -3.4% |
-| 2021 | 2017 to 2019 | 2020 | kept never-bet | 0 | no bets | -1.0% |
-| 2022 | 2017 to 2020 | 2021 | kept never-bet | 0 | no bets | -7.1% |
-| 2023 | 2017 to 2021 | 2022 | kept never-bet | 0 | no bets | -0.8% |
-| 2024 | 2017 to 2022 | 2023 | kept never-bet | 0 | no bets | -5.6% |
-| 2025 | 2017 to 2023 | 2024 | kept never-bet | 0 | no bets | -6.7% |
-| 2026 | 2017 to 2024 | 2025 | kept never-bet | 0 | no bets | -5.0% |
+| 2018 | 2015 to 2016 | 2017 | kept never-bet | 0 | no bets | -4.9% |
+| 2019 | 2015 to 2017 | 2018 | kept never-bet | 0 | no bets | 1.0% |
+| 2020 | 2015 to 2018 | 2019 | kept never-bet | 0 | no bets | -3.4% |
+| 2021 | 2015 to 2019 | 2020 | kept never-bet | 0 | no bets | -1.0% |
+| 2022 | 2015 to 2020 | 2021 | kept never-bet | 0 | no bets | -7.1% |
+| 2023 | 2015 to 2021 | 2022 | kept never-bet | 0 | no bets | -0.8% |
+| 2024 | 2015 to 2022 | 2023 | kept never-bet | 0 | no bets | -5.6% |
+| 2025 | 2015 to 2023 | 2024 | kept never-bet | 0 | no bets | -6.7% |
+| 2026 | 2015 to 2024 | 2025 | kept never-bet | 0 | no bets | -5.0% |
 
-What the learning looked like: averaged over these seasons, the agent started out betting on 72% of its training games and ended up betting on 5%. On the held-back season, what it still wanted to bet on did not make money.
+What the learning looked like: averaged over these seasons, the agent started out betting on 63% of its training games and ended up betting on 12%. On the held-back season, what it still wanted to bet on did not make money.
 
 ## Betting early, at opening prices
 
@@ -88,10 +90,10 @@ Paper bets at the opening price, 2,429 games (season 2026). "Value against close
 | Strategy | Bets | Won | Avg price | Return per unit | 95% range | Value against close |
 |---|---:|---:|---:|---:|---|---:|
 | GRPO agent | 0 | | | no bets | | |
-| Edge rule (3%+, quarter Kelly) | 775 | 45.7% | 2.20 | -1.9% | -9.4% to 5.6% | -1.99% |
-| Always the home team | 2,429 | 52.9% | 1.86 | -4.0% | -7.6% to -0.1% | -3.67% |
-| Always the favourite | 2,429 | 56.0% | 1.71 | -5.1% | -8.4% to -1.7% | -4.27% |
-| Always the underdog | 2,429 | 44.0% | 2.22 | -3.7% | -8.1% to 0.6% | -4.62% |
+| Edge rule (3%+, quarter Kelly) | 775 | 45.7% | 2.20 | -1.9% | -9.6% to 5.7% | -1.99% |
+| Always the home team | 2,429 | 52.9% | 1.86 | -4.0% | -7.5% to -0.3% | -3.67% |
+| Always the favourite | 2,429 | 56.0% | 1.71 | -5.1% | -8.5% to -1.8% | -4.27% |
+| Always the underdog | 2,429 | 44.0% | 2.22 | -3.7% | -7.9% to 0.6% | -4.62% |
 
 | Season | Trained on | Checked on | Result of training | Bets | Return per unit | Edge rule return per unit |
 |---|---|---|---|---:|---:|---:|

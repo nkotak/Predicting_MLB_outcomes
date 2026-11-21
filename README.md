@@ -15,15 +15,15 @@ Tested on **27,619 games** from seasons 2015 to 2026. Every season was predicted
 | This model | 27,619 | **57.2%** |
 | Team rating (Elo) on its own | 27,619 | 56.6% |
 | Always picking the home team | 27,619 | 53.3% |
-| Betting market's closing price | 22,409 | **58.2%** |
-| This model, on those same games | 22,409 | 57.6% |
+| Betting market's closing price | 27,162 | **58.2%** |
+| This model, on those same games | 27,162 | 57.3% |
 
 In plain words:
 
 - **The model is real.** It beats always picking the home team by 3.9 points, and it cannot see a game's own result.
-- **It does not beat the betting market.** The closing price is the better forecaster (log loss 0.6714 against 0.6750, and the gap is larger than chance).
-- **Paper betting at closing prices has not made money** (seasons 2020 to 2026, 15,384 games). Blind strategies lost 3.5% to 3.9% per unit staked, which is the bookmaker's cut. A fixed "bet when the model sees a 3% edge" rule returned -4.2%.
-- **The learning agent chose not to bet.** In all 7 test seasons, no betting policy it learned was proven better than not betting, so it passed on every game. That is the right call given the line above.
+- **It does not beat the betting market.** The closing price is the better forecaster (log loss 0.6720 against 0.6762, and the gap is larger than chance).
+- **Paper betting at closing prices has not made money** (seasons 2018 to 2026, 20,059 games). Blind strategies lost 3.5% to 3.7% per unit staked, which is the bookmaker's cut. A fixed "bet when the model sees a 3% edge" rule returned -3.6%.
+- **The learning agent chose not to bet.** In all 9 test seasons, no betting policy it learned was proven better than not betting, so it passed on every game. That is the right call given the line above.
 - **One promising signal: early prices.** When the model disagrees with the opening price, the price tends to move toward the model by game time (7,240 games, seasons 2024 to 2026). That has not yet turned into profit after the bookmaker's cut. The prediction log is there to test it fairly from now on.
 
 Full numbers, season by season: [reports/BACKTEST.md](reports/BACKTEST.md). The same results as a page: `reports/index.html`.
